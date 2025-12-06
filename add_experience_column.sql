@@ -1,0 +1,3 @@
+-- This file is now obsolete as the full schema is defined in create_characters_table.sql
+-- Please execute the SQL in create_characters_table.sql against your Supabase database.
+-- The 'experience' column is defined as DOUBLE PRECISION and the foreign key is 'user_id'.

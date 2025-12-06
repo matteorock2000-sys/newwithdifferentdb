@@ -1,0 +1,209 @@
+import { useState, useEffect } from 'react';
+import { useFetcher, useNavigate } from '@remix-run/react';
+import type { Character } from '~/types';
+
+interface CharacterImporterProps {
+  onImport?: (character: Character) => void; // Made optional to prevent crash if not provided
+  onEdit: (character: Character) => void; // For importing and then editing (used for parent state updates)
+  onCancel: () => void; // To go back to selection options
+  initialText?: string;
+}
+
+export default function CharacterImporter({ onImport, onEdit, onCancel, initialText }: CharacterImporterProps) {
+  const [text, setText] = useState(initialText || ''); 
+  const [overview, setOverview] = useState<Character | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<string[]>([]); // State for handling incomplete parsing
+
+  const fetcher = useFetcher();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (fetcher.data) {
+      const data = fetcher.data as any;
+      
+      if (data.status === 'complete' && data.character) {
+        setOverview(data.character);
+        setError(null);
+        setQuestions([]);
+      } else if (data.status === 'incomplete' && data.partialCharacter && data.questions) {
+        // Handle incomplete parsing: show partial data and ask questions
+        setOverview(data.partialCharacter);
+        setQuestions(data.questions);
+        setError("More information needed to complete the character.");
+      } else if (data.status === 'error' || data.message) {
+        setError(data.message || 'An unknown error occurred during parsing.');
+        setOverview(null);
+        setQuestions([]);
+      }
+    }
+  }, [fetcher.data]);
+
+  const handleParse = () => {
+    if (!text.trim()) {
+      setError("Please paste character text to import.");
+      setOverview(null);
+      return;
+    }
+    setError(null);
+    setQuestions([]);
+    
+    // Prepare context for the AI, including any partial data or previous questions
+    const context = {
+      partialCharacter: overview,
+      questions: questions,
+    };
+    
+    const formData = new FormData();
+    formData.append('characterText', text);
+    formData.append('context', JSON.stringify(context));
+    
+    // Note: If this is a re-parse after answering questions, the answers are already collected 
+    // by the fetcher.Form below and sent directly to the action.
+    
+    fetcher.submit(formData, { method: 'post', action: '/api/character/import' });
+  };
+
+  const handleSaveToSlot = () => {
+    if (overview && onImport) { // FIX: Check if onImport exists before calling
+      onImport(overview);
+      setOverview(null);
+      setText(''); // Clear text after saving
+    }
+  };
+
+  const handleEdit = () => {
+    if (overview) {
+      // 1. Generate temporary ID
+      const tempId = crypto.randomUUID();
+      // 2. Store character data temporarily in sessionStorage
+      sessionStorage.setItem(`tempChar-${tempId}`, JSON.stringify(overview));
+      
+      // 3. Navigate to the character creation route with the import ID
+      navigate(`/character/new?importId=${tempId}`);
+      
+      // Clear local state after navigation
+      setOverview(null);
+      setText(''); 
+      
+      // Call onEdit in case the parent needs to close a modal or update state
+      onEdit(overview); 
+    }
+  };
+
+  return (
+    <div className="bg-gray-700 p-4 rounded-md text-gray-200 flex flex-col h-full">
+      <h4 className="text-xl font-bold text-red-300 mb-2">Import Character</h4>
+      
+      <textarea
+        className="w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500 flex-grow mb-2"
+        rows={8}
+        placeholder="Paste your character sheet text here..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      ></textarea>
+
+      {error && <p className="text-red-400 text-sm mb-2">{error}</p>}
+      
+      {/* Display questions if parsing is incomplete */}
+      {questions.length > 0 && (
+        <fetcher.Form method="post" action="/api/character/import" className="mb-4 p-3 bg-gray-800 rounded-md">
+          <h5 className="text-lg font-bold text-yellow-300 mb-2">Missing Information:</h5>
+          <input type="hidden" name="characterText" value={text} />
+          <input type="hidden" name="context" value={JSON.stringify({ partialCharacter: overview, questions: questions })} />
+          
+          {questions.map((q, index) => (
+            <div key={index} className="mb-2">
+              <label className="block text-sm text-gray-300 mb-1">{q}</label>
+              <input 
+                type="text" 
+                name={`answer-${index}`} 
+                className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-1 text-gray-200 focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                required
+              />
+            </div>
+          ))}
+          <button
+            type="submit"
+            className="mt-3 bg-yellow-700 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-md transition-colors w-full"
+            disabled={fetcher.state === 'submitting'}
+          >
+            {fetcher.state === 'submitting' ? 'Submitting Answers...' : 'Submit Answers & Re-Parse'}
+          </button>
+        </fetcher.Form>
+      )}
+
+      <div className="flex justify-between space-x-2 mb-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-md transition-colors"
+        >
+          Back
+        </button>
+        <button
+          type="button"
+          onClick={handleParse}
+          className="bg-blue-700 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md transition-colors"
+          disabled={fetcher.state === 'submitting'}
+        >
+          {fetcher.state === 'submitting' ? 'Parsing...' : 'Parse Character'}
+        </button>
+      </div>
+
+      {overview && (
+        <div className="bg-gray-600 p-3 rounded-md mt-4 flex-grow overflow-auto">
+          <h5 className="text-lg font-bold text-red-200 mb-2">Character Overview:</h5>
+          <p><strong>Name:</strong> {overview.name}</p>
+          <p><strong>Race:</strong> {overview.race}</p>
+          <p><strong>Class:</strong> {overview.class} (Level {overview.level})</p>
+          <p><strong>HP:</strong> {overview.hp}/{overview.maxHp}</p>
+          <p><strong>AC:</strong> {overview.ac} (Initiative: {overview.initiative})</p>
+          <p><strong>Passive Perception:</strong> {overview.passivePerception}</p>
+          <p><strong>Saving Throws:</strong> {overview.savingThrows?.join(', ') || 'None'}</p>
+          <p><strong>Skills:</strong> {overview.skills?.join(', ') || 'None'}</p>
+          
+          <h6 className="font-semibold mt-2 text-red-300">Ability Scores:</h6>
+          <p>STR: {overview.stats.strength}, DEX: {overview.stats.dexterity}, CON: {overview.stats.constitution}</p>
+          <p>INT: {overview.stats.intelligence}, WIS: {overview.stats.wisdom}, CHA: {overview.stats.charisma}</p>
+
+          {overview.spellcastingAbility && (
+            <>
+              <h6 className="font-semibold mt-2 text-red-300">Spellcasting:</h6>
+              <p>Ability: {overview.spellcastingAbility} (DC: {overview.spellSaveDC}, Attack: {overview.spellAttackBonus})</p>
+              <p>Cantrips: {overview.spells?.cantrips?.join(', ') || 'None'}</p>
+              <p>L1 Spells: {overview.spells?.level1?.join(', ') || 'None'}</p>
+            </>
+          )}
+
+          <h6 className="font-semibold mt-2 text-red-300">Weapons:</h6>
+          <p>Primary: {overview.weapons?.primary?.name} ({overview.weapons?.primary?.attackBonus}, {overview.weapons?.primary?.damage})</p>
+          {overview.weapons?.secondary && <p>Secondary: {overview.weapons.secondary.name} ({overview.weapons.secondary.attackBonus}, {overview.weapons.secondary.damage})</p>}
+          {overview.weapons?.ranged && <p>Ranged: {overview.weapons.ranged.name} ({overview.weapons.ranged.attackBonus}, {overview.weapons.ranged.damage})</p>}
+
+          <h6 className="font-semibold mt-2 text-red-300">Features & Inventory:</h6>
+          <p>Features: {overview.features?.slice(0, 3).join(', ') + (overview.features && overview.features.length > 3 ? '...' : '') || 'None'}</p>
+          <p>Inventory: {overview.inventory?.slice(0, 3).join(', ') + (overview.inventory && overview.inventory.length > 3 ? '...' : '') || 'None'}</p>
+
+
+          <div className="flex justify-end mt-4 space-x-2">
+            <button
+              type="button"
+              onClick={handleSaveToSlot}
+              className="bg-green-700 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-md transition-colors"
+            >
+              Save to Slot
+            </button>
+            <button
+              type="button"
+              onClick={handleEdit}
+              className="bg-purple-700 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-md transition-colors"
+            >
+              Edit Character
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

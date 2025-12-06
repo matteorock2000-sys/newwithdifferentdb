@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puter.js Image Generation Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .loading {
+            color: #007bff;
+            font-style: italic;
+        }
+        .error {
+            color: #dc3545;
+        }
+        .success {
+            color: #28a745;
+        }
+        img {
+            max-width: 100%;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Puter.js Image Generation Demo</h1>
+        <p>This demo shows how to use Puter.js for client-side image generation with the Nano Banana model.</p>
+        
+        <div class="form-group">
+            <label for="prompt">Prompt:</label>
+            <textarea id="prompt" rows="4" placeholder="Enter your image prompt here..."></textarea>
+        </div>
+        
+        <div class="form-group">
+            <label for="model">Model:</label>
+            <select id="model">
+                <option value="gemini-2.5-flash-image-preview">Nano Banana (Gemini 2.5 Flash Image)</option>
+                <option value="google/gemini-3-pro-image">Nano Banana Pro (Gemini 3 Pro Image)</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="width">Width:</label>
+            <input type="number" id="width" value="1024" min="256" max="2048">
+        </div>
+        
+        <div class="form-group">
+            <label for="height">Height:</label>
+            <input type="number" id="height" value="1024" min="256" max="2048">
+        </div>
+        
+        <button onclick="generateImage()">Generate Image</button>
+        <button onclick="clearResults()">Clear Results</button>
+        
+        <div id="status" class="result"></div>
+        <div id="imageContainer"></div>
+    </div>
+
+    <!-- Load Puter.js -->
+    <script src="https://js.puter.com/v2/"></script>
+    
+    <script>
+        // Wait for Puter.js to load
+        window.addEventListener('load', function() {
+            if (window.puter) {
+                document.getElementById('status').innerHTML = '<span class="success">Puter.js loaded successfully!</span>';
+            } else {
+                document.getElementById('status').innerHTML = '<span class="error">Failed to load Puter.js</span>';
+            }
+        });
+
+        async function generateImage() {
+            const prompt = document.getElementById('prompt').value.trim();
+            const model = document.getElementById('model').value;
+            const width = parseInt(document.getElementById('width').value);
+            const height = parseInt(document.getElementById('height').value);
+            
+            if (!prompt) {
+                document.getElementById('status').innerHTML = '<span class="error">Please enter a prompt</span>';
+                return;
+            }
+            
+            document.getElementById('status').innerHTML = '<span class="loading">Generating image...</span>';
+            document.getElementById('imageContainer').innerHTML = '';
+            
+            try {
+                // Generate image using Puter.js
+                const imageElement = await window.puter.ai.txt2img(prompt, {
+                    model: model,
+                    width: width,
+                    height: height,
+                    disable_safety_checker: true
+                });
+                
+                if (imageElement && imageElement instanceof HTMLImageElement) {
+                    document.getElementById('status').innerHTML = '<span class="success">Image generated successfully!</span>';
+                    document.getElementById('imageContainer').appendChild(imageElement);
+                    
+                    // Convert to base64 for saving
+                    const canvas = document.createElement('canvas');
+                    canvas.width = imageElement.width;
+                    canvas.height = imageElement.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(imageElement, 0, 0);
+                    const base64 = canvas.toDataURL('image/jpeg', 0.85);
+                    
+                    console.log('Base64 image data:', base64);
+                } else {
+                    throw new Error('Puter.js did not return a valid image element');
+                }
+            } catch (error) {
+                console.error('Error generating image:', error);
+                document.getElementById('status').innerHTML = '<span class="error">Error generating image: ' + error.message + '</span>';
+            }
+        }
+        
+        function clearResults() {
+            document.getElementById('prompt').value = '';
+            document.getElementById('imageContainer').innerHTML = '';
+            document.getElementById('status').innerHTML = '';
+        }
+    </script>
+</body>
+</html>

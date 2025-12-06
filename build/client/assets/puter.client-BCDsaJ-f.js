@@ -1,0 +1,16 @@
+async function p(){if(window.puter)return;const e=document.createElement("script");return e.src="https://js.puter.com/v2/",e.async=!0,new Promise((t,r)=>{e.onload=()=>{console.log("Puter.js loaded successfully"),t()},e.onerror=()=>{console.error("Failed to load Puter.js"),r(new Error("Failed to load Puter.js"))},document.head.appendChild(e)})}async function w(e,t={}){const{model:r="gemini-2.5-flash-image-preview",width:a=1024,height:o=1024,disableSafetyChecker:i=!0}=t;try{if(await p(),!window.puter||!window.puter.ai)throw new Error("Puter.js is not properly loaded");console.log("Generating image with Puter.js:",{prompt:e,model:r,width:a,height:o});const n=await window.puter.ai.txt2img(e,{model:r,width:a,height:o,disable_safety_checker:i});if(!n||!(n instanceof HTMLImageElement))throw new Error("Puter.js did not return a valid image element");const s=await h(n);return console.log("Image generated successfully, base64 length:",s.length),s}catch(n){return console.error("Error generating image with Puter.js:",n),""}}function h(e){return new Promise((t,r)=>{const a=document.createElement("canvas");a.width=e.width,a.height=e.height;const o=a.getContext("2d");if(!o){r(new Error("Could not get canvas context"));return}try{o.drawImage(e,0,0);const n=a.toDataURL("image/jpeg",.85).split(",")[1];t(n)}catch(i){r(new Error(`Failed to convert image to base64: ${i instanceof Error?i.message:"Unknown error"}`))}})}async function y(e,t={}){var o,i,n,s,l,d,c,g,u,m;const a=`
+    "fantasy character portrait," "RPG avatar," "2D digital art," "bust shot," "front view," "high detail," "fantasy illustration," "concept art,"
+    Character: ${`A Dungeons & Dragons character portrait, 2D digital art, front-facing bust shot, direct eye contact, highly detailed fantasy illustration.
+
+Character Details:
+- Race: ${e.race}, Class: ${e.class}, Level: ${e.level}
+- Alignment: ${e.alignment}, Background: ${e.background}
+- Appearance: ${e.appearance||"No specific appearance details"}
+- Armor & Equipment: ${e.armor||"standard"}${e.equipment&&e.equipment.length>0?`, ${e.equipment.join(", ")}`:""}
+- Weapons: Primary: ${((i=(o=e.weapons)==null?void 0:o.primary)==null?void 0:i.name)||"none"}, Secondary: ${((s=(n=e.weapons)==null?void 0:n.secondary)==null?void 0:s.name)||"none"}, Ranged: ${((d=(l=e.weapons)==null?void 0:l.ranged)==null?void 0:d.name)||"none"}
+- Personality: Trait: ${((c=e.personality)==null?void 0:c.trait)||"none"}, Ideal: ${((g=e.personality)==null?void 0:g.ideal)||"none"}, Bond: ${((u=e.personality)==null?void 0:u.bond)||"none"}, Flaw: ${((m=e.personality)==null?void 0:m.flaw)||"none"}
+- Visual Style: ${e.class} with ${e.class==="Wizard"?"arcane symbols and magical aura":e.class==="Cleric"?"holy symbol and divine light":e.class==="Rogue"?"stealthy clothing and daggers":e.class==="Fighter"?"battle-worn armor and weapons":"class-appropriate visual elements"}
+
+Art Direction: Professional fantasy character portrait, neutral expression, detailed facial features, vibrant colors, dramatic lighting, parchment background texture.`}.
+    Neutral expression, direct eye contact, detailed lighting, vibrant colors, dramatic composition.
+  `;return w(a,{...t,model:t.model||"gemini-2.5-flash-image-preview",width:t.width||1024,height:t.height||1024})}export{p as ensurePuterLoaded,y as generateCharacterPortrait,w as generateImageWithPuter};

@@ -1,0 +1,1 @@
+ALTER TABLE rooms ADD COLUMN game_session_state JSONB DEFAULT NULL;

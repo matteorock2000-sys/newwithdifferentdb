@@ -1,0 +1,232 @@
+{
+  "C:/Users/Admin/Documents/codespaces/codespaces-blank-1/app/tailwind.css": {
+    "file": "assets/tailwind-DkfWkazT.css",
+    "src": "C:/Users/Admin/Documents/codespaces/codespaces-blank-1/app/tailwind.css"
+  },
+  "_CharacterDisplayCard-uiRbMeso.js": {
+    "file": "assets/CharacterDisplayCard-uiRbMeso.js",
+    "name": "CharacterDisplayCard",
+    "imports": [
+      "_components-fgYI7aOU.js"
+    ]
+  },
+  "_NewCharacterForm-0-9pR7vG.js": {
+    "file": "assets/NewCharacterForm-0-9pR7vG.js",
+    "name": "NewCharacterForm",
+    "imports": [
+      "_components-fgYI7aOU.js"
+    ],
+    "dynamicImports": [
+      "app/services/puter.client.ts",
+      "app/services/puter.client.ts"
+    ]
+  },
+  "_PlayerSetupSlot-BN8dzo25.js": {
+    "file": "assets/PlayerSetupSlot-BN8dzo25.js",
+    "name": "PlayerSetupSlot",
+    "imports": [
+      "_components-fgYI7aOU.js",
+      "_CharacterDisplayCard-uiRbMeso.js"
+    ]
+  },
+  "_ScenarioSelector-Cg38crH-.js": {
+    "file": "assets/ScenarioSelector-Cg38crH-.js",
+    "name": "ScenarioSelector",
+    "imports": [
+      "_components-fgYI7aOU.js",
+      "_toast-Ds1Ig-J2.js",
+      "app/entry.client.tsx"
+    ]
+  },
+  "_components-fgYI7aOU.js": {
+    "file": "assets/components-fgYI7aOU.js",
+    "name": "components"
+  },
+  "_toast-Ds1Ig-J2.js": {
+    "file": "assets/toast-Ds1Ig-J2.js",
+    "name": "toast",
+    "imports": [
+      "_components-fgYI7aOU.js"
+    ]
+  },
+  "app/entry.client.tsx": {
+    "file": "assets/entry.client-CjCZaY_c.js",
+    "name": "entry.client",
+    "src": "app/entry.client.tsx",
+    "isEntry": true,
+    "imports": [
+      "_components-fgYI7aOU.js"
+    ]
+  },
+  "app/root.tsx?__remix-build-client-route": {
+    "file": "assets/root-gmJ0MLGy.js",
+    "name": "root",
+    "src": "app/root.tsx?__remix-build-client-route",
+    "isEntry": true,
+    "imports": [
+      "_components-fgYI7aOU.js",
+      "_toast-Ds1Ig-J2.js"
+    ],
+    "assets": [
+      "assets/tailwind-DkfWkazT.css"
+    ]
+  },
+  "app/routes/_index.tsx?__remix-build-client-route": {
+    "file": "assets/_index-CgXwHjhF.js",
+    "name": "_index",
+    "src": "app/routes/_index.tsx?__remix-build-client-route",
+    "isEntry": true,
+    "imports": [
+      "_components-fgYI7aOU.js",
+      "_NewCharacterForm-0-9pR7vG.js",
+      "_PlayerSetupSlot-BN8dzo25.js",
+      "_CharacterDisplayCard-uiRbMeso.js"
+    ]
+  },
+  "app/routes/api.character.import.tsx?__remix-build-client-route": {
+    "file": "assets/api.character.import-l0sNRNKZ.js",
+    "name": "api.character.import",
+    "src": "app/routes/api.character.import.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/api.character.manage.tsx?__remix-build-client-route": {
+    "file": "assets/api.character.manage-l0sNRNKZ.js",
+    "name": "api.character.manage",
+    "src": "app/routes/api.character.manage.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/api.character.portrait.generate.tsx?__remix-build-client-route": {
+    "file": "assets/api.character.portrait.generate-l0sNRNKZ.js",
+    "name": "api.character.portrait.generate",
+    "src": "app/routes/api.character.portrait.generate.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/api.generate-character-details.tsx?__remix-build-client-route": {
+    "file": "assets/api.generate-character-details-l0sNRNKZ.js",
+    "name": "api.generate-character-details",
+    "src": "app/routes/api.generate-character-details.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/api.health.tsx?__remix-build-client-route": {
+    "file": "assets/api.health-l0sNRNKZ.js",
+    "name": "api.health",
+    "src": "app/routes/api.health.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/api.room.dice.tsx?__remix-build-client-route": {
+    "file": "assets/api.room.dice-l0sNRNKZ.js",
+    "name": "api.room.dice",
+    "src": "app/routes/api.room.dice.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/api.room.heartbeat.tsx?__remix-build-client-route": {
+    "file": "assets/api.room.heartbeat-l0sNRNKZ.js",
+    "name": "api.room.heartbeat",
+    "src": "app/routes/api.room.heartbeat.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/api.room.move-character.tsx?__remix-build-client-route": {
+    "file": "assets/api.room.move-character-l0sNRNKZ.js",
+    "name": "api.room.move-character",
+    "src": "app/routes/api.room.move-character.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/api.room.scenarios.tsx?__remix-build-client-route": {
+    "file": "assets/api.room.scenarios-l0sNRNKZ.js",
+    "name": "api.room.scenarios",
+    "src": "app/routes/api.room.scenarios.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/api.room.suggestions.tsx?__remix-build-client-route": {
+    "file": "assets/api.room.suggestions-l0sNRNKZ.js",
+    "name": "api.room.suggestions",
+    "src": "app/routes/api.room.suggestions.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/api.room.votes.tsx?__remix-build-client-route": {
+    "file": "assets/api.room.votes-l0sNRNKZ.js",
+    "name": "api.room.votes",
+    "src": "app/routes/api.room.votes.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/character.new.tsx?__remix-build-client-route": {
+    "file": "assets/character.new-DTgv7Fqm.js",
+    "name": "character.new",
+    "src": "app/routes/character.new.tsx?__remix-build-client-route",
+    "isEntry": true,
+    "imports": [
+      "_components-fgYI7aOU.js",
+      "_NewCharacterForm-0-9pR7vG.js"
+    ]
+  },
+  "app/routes/game.tsx?__remix-build-client-route": {
+    "file": "assets/game-DYkj8yI5.js",
+    "name": "game",
+    "src": "app/routes/game.tsx?__remix-build-client-route",
+    "isEntry": true,
+    "imports": [
+      "_components-fgYI7aOU.js",
+      "_ScenarioSelector-Cg38crH-.js",
+      "_NewCharacterForm-0-9pR7vG.js",
+      "_PlayerSetupSlot-BN8dzo25.js",
+      "_toast-Ds1Ig-J2.js",
+      "app/entry.client.tsx",
+      "_CharacterDisplayCard-uiRbMeso.js"
+    ]
+  },
+  "app/routes/login.tsx?__remix-build-client-route": {
+    "file": "assets/login-MKTYTarH.js",
+    "name": "login",
+    "src": "app/routes/login.tsx?__remix-build-client-route",
+    "isEntry": true,
+    "imports": [
+      "_components-fgYI7aOU.js"
+    ]
+  },
+  "app/routes/logout.tsx?__remix-build-client-route": {
+    "file": "assets/logout-l0sNRNKZ.js",
+    "name": "logout",
+    "src": "app/routes/logout.tsx?__remix-build-client-route",
+    "isEntry": true
+  },
+  "app/routes/register.tsx?__remix-build-client-route": {
+    "file": "assets/register-y7vrBx0-.js",
+    "name": "register",
+    "src": "app/routes/register.tsx?__remix-build-client-route",
+    "isEntry": true,
+    "imports": [
+      "_components-fgYI7aOU.js"
+    ]
+  },
+  "app/routes/rooms.tsx?__remix-build-client-route": {
+    "file": "assets/rooms-Cmr3SJK9.js",
+    "name": "rooms",
+    "src": "app/routes/rooms.tsx?__remix-build-client-route",
+    "isEntry": true,
+    "imports": [
+      "_components-fgYI7aOU.js",
+      "_PlayerSetupSlot-BN8dzo25.js",
+      "_toast-Ds1Ig-J2.js",
+      "_CharacterDisplayCard-uiRbMeso.js"
+    ]
+  },
+  "app/routes/world-map.tsx?__remix-build-client-route": {
+    "file": "assets/world-map-DPBAwJcy.js",
+    "name": "world-map",
+    "src": "app/routes/world-map.tsx?__remix-build-client-route",
+    "isEntry": true,
+    "imports": [
+      "_components-fgYI7aOU.js",
+      "_CharacterDisplayCard-uiRbMeso.js",
+      "_ScenarioSelector-Cg38crH-.js",
+      "_toast-Ds1Ig-J2.js",
+      "app/entry.client.tsx"
+    ]
+  },
+  "app/services/puter.client.ts": {
+    "file": "assets/puter.client-BCDsaJ-f.js",
+    "name": "puter.client",
+    "src": "app/services/puter.client.ts",
+    "isDynamicEntry": true
+  }
+}

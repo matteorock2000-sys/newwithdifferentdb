@@ -1,0 +1,17 @@
+# This file configures the build and deployment settings for Netlify.
+
+[build]
+  # This is the command Netlify will run to build your site.
+  command = "npm run build"
+
+  # This is the directory that contains the built static assets.
+  # We are now forcing the output to 'dist' in the build script.
+  publish = "dist"
+
+# CRITICAL FIX: Explicitly route all requests to the Remix serverless function.
+# This ensures the root path (/) and all dynamic routes hit the SSR handler,
+# resolving the persistent 404 error on the base URL.
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/server"
+  status = 200
