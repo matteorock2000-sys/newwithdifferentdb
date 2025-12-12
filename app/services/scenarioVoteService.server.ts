@@ -1,6 +1,6 @@
 import type { PlayerSlot, ScenarioVote, ScenarioWithVotes, AdventureScenario } from "~/types";
 import { db } from "~/services/db.server";
-import { getRoomByCode, updateRoomScenarios } from "~/services/room.server";
+import { getRoomByCode, storeRoomScenarios } from "~/services/room.server";
 import type { DBRoom } from "~/services/room.server";
 
 const logPrefix = "[SCENARIO VOTE SERVICE]";
@@ -51,6 +51,38 @@ export async function castVote(
     return { success: false, message: "Room not found.", userVoteCount: 0 };
   }
   
+  // Validate that the slotIndex belongs to the requesting user
+  const targetSlot = room.setup_slots[slotIndex];
+  if (!targetSlot) {
+    console.log(`${logPrefix} Slot ${slotIndex} does not exist in room ${roomCode}`);
+    return { success: false, message: `Slot ${slotIndex} does not exist.`, userVoteCount: 0 };
+  }
+  
+  if (targetSlot.userId !== userId) {
+    console.log(`${logPrefix} Slot ${slotIndex} belongs to user ${targetSlot.userId}, not ${userId}`);
+    return { success: false, message: `Slot ${slotIndex} does not belong to you.`, userVoteCount: 0 };
+  }
+  
+  if (targetSlot.type !== 'Human' && targetSlot.type !== 'AI') {
+    console.log(`${logPrefix} Slot ${slotIndex} is not a voting slot (type: ${targetSlot.type})`);
+    return { success: false, message: `Slot ${slotIndex} cannot vote.`, userVoteCount: 0 };
+  }
+  
+  // Handle REGENERATE votes as a special case
+  if (scenarioId === 'REGENERATE') {
+    console.log(`${logPrefix} Processing REGENERATE vote for slot ${slotIndex}`);
+    
+    // For REGENERATE votes, we don't need to check scenario existence
+    // Just proceed with the vote casting logic
+  } else {
+    // Check if scenario exists in the room for regular scenario votes
+    const scenarioExists = room.scenarios?.some(scenario => scenario.id === scenarioId);
+    if (!scenarioExists) {
+      console.log(`${logPrefix} Scenario ${scenarioId} not found in room ${roomCode}`);
+      return { success: false, message: "Scenario not found in room.", userVoteCount: userVoteCount };
+    }
+  }
+  
   // Check if user has available votes
   const userVoteCount = getUserVoteCount(room, userId);
   const allUserVotes = (await getScenarioVotes(roomCode)).filter(vote => 
@@ -59,13 +91,52 @@ export async function castVote(
   
   console.log(`${logPrefix} User vote count: ${userVoteCount}, current votes: ${allUserVotes.length}`);
   
-  if (allUserVotes.length >= userVoteCount) {
-    console.log(`${logPrefix} User has no available votes`);
+  // Check if the target slot already has a vote for a different scenario
+  const slotVotes = allUserVotes.filter(vote => vote.slotIndex === slotIndex);
+  const existingSlotVote = slotVotes.find(vote => vote.scenarioId !== scenarioId);
+  
+  // Count active votes (excluding the current slot's vote if changing)
+  const activeVotesCount = existingSlotVote ? 
+    allUserVotes.length - 1 : // Exclude the vote that will be changed
+    allUserVotes.length;       // Count all votes if this is a new vote
+  
+  if (activeVotesCount >= userVoteCount) {
+    console.log(`${logPrefix} User has no available slots for voting`);
     return {
       success: false,
-      message: `You have already used all ${userVoteCount} of your votes.`,
+      message: `You have already used all ${userVoteCount} of your voting slots.`,
       userVoteCount
     };
+  }
+  
+  // Check if slot already has a vote for a different scenario and auto-retract it
+  const existingDifferentVote = slotVotes.find(vote => vote.scenarioId !== scenarioId);
+  
+  console.log(`${logPrefix} Slot votes for slot ${slotIndex}:`, slotVotes);
+  console.log(`${logPrefix} Existing different vote:`, existingDifferentVote);
+  
+  if (existingDifferentVote) {
+    console.log(`${logPrefix} Auto-retracting all votes for slot ${slotIndex} from user ${userId}`);
+    
+    // Remove ALL votes for this userId and slotIndex across ALL scenarios
+    const updatedScenariosForRetraction = room.scenarios?.map(scenario => {
+      const filteredUserVotes = (scenario.userVotes || []).filter(vote =>
+        !(vote.userId === userId && vote.slotIndex === slotIndex)
+      );
+      return {
+        ...scenario,
+        userVotes: filteredUserVotes
+      };
+    });
+
+    if (updatedScenariosForRetraction) {
+      const retractionSuccess = await storeRoomScenarios(roomCode, updatedScenariosForRetraction as AdventureScenario[]);
+      if (retractionSuccess) {
+        console.log(`${logPrefix} Successfully auto-retracted all votes for slot ${slotIndex}`);
+      } else {
+        console.error(`${logPrefix} Failed to auto-retract votes for slot ${slotIndex}`);
+      }
+    }
   }
   
   // Check if user already voted for this specific scenario with this slot
@@ -84,7 +155,17 @@ export async function castVote(
     };
   }
   
-  // Create new vote
+  // Handle REGENERATE votes - return success after retraction, no storage needed
+  if (scenarioId === 'REGENERATE') {
+    console.log(`${logPrefix} REGENERATE vote registered for slot ${slotIndex}`);
+    return {
+      success: true,
+      message: 'Regenerate vote registered!',
+      userVoteCount
+    };
+  }
+  
+  // Create new vote for real scenarios
   const newVote: ScenarioVote = {
     scenarioId,
     userId,
@@ -116,7 +197,7 @@ export async function castVote(
     return { success: false, message: "Scenario not found in room.", userVoteCount: userVoteCount };
   }
 
-  const success = await updateRoomScenarios(roomCode, updatedScenarios as AdventureScenario[]);
+  const success = await storeRoomScenarios(roomCode, updatedScenarios as AdventureScenario[]);
   
   console.log(`${logPrefix} Vote persistence result: ${success}`);
   
@@ -142,8 +223,11 @@ export async function retractVote(
   userId: string, 
   slotIndex: number
 ): Promise<{ success: boolean; message: string }> {
+  console.log(`${logPrefix} retractVote called with:`, { roomCode, scenarioId, userId, slotIndex });
+  
   const room = await getRoomByCode(roomCode);
   if (!room) {
+    console.log(`${logPrefix} Room not found: ${roomCode}`);
     return { success: false, message: "Room not found." };
   }
 
@@ -156,6 +240,7 @@ export async function retractVote(
       );
       if (filteredUserVotes.length < initialUserVotesCount) {
         voteFoundAndRetracted = true;
+        console.log(`${logPrefix} Found and retracting vote for user ${userId} slot ${slotIndex} from scenario ${scenarioId}`);
       }
       return {
         ...scenario,
@@ -166,20 +251,23 @@ export async function retractVote(
   });
 
   if (!voteFoundAndRetracted) {
+    console.log(`${logPrefix} No vote found to retract for user ${userId} slot ${slotIndex} in scenario ${scenarioId}`);
     return { success: false, message: "No vote found to retract." };
   }
 
   if (!updatedScenarios) {
+    console.log(`${logPrefix} No scenarios found in room: ${roomCode}`);
     return { success: false, message: "Scenario not found in room for retraction."};
   }
 
-  const success = await updateRoomScenarios(roomCode, updatedScenarios as AdventureScenario[]);
+  const success = await storeRoomScenarios(roomCode, updatedScenarios as AdventureScenario[]);
 
   if (!success) {
     console.error(`${logPrefix} Failed to persist vote retraction for room ${roomCode}, scenario ${scenarioId}`);
     return { success: false, message: "Failed to retract vote due to database error." };
   }
 
+  console.log(`${logPrefix} Vote retracted successfully for room ${roomCode}, scenario ${scenarioId}`);
   return {
     success: true,
     message: "Vote retracted successfully!"
@@ -201,7 +289,7 @@ export async function clearScenarioVotes(roomCode: string): Promise<void> {
     userVotes: [] // Clear all user votes for this scenario
   }));
 
-  const success = await updateRoomScenarios(roomCode, updatedScenarios as AdventureScenario[]);
+  const success = await storeRoomScenarios(roomCode, updatedScenarios as AdventureScenario[]);
 
   if (!success) {
     console.error(`${logPrefix} Failed to clear scenario votes for room ${roomCode}`);

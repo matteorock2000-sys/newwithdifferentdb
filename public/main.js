@@ -21,18 +21,6 @@ window.onkeydown = function(e) {
         lastVal: '',
         userTyping: false
     }
-
-    // Listen for messages from parent window
-    window.addEventListener('message', function(event) {
-        if (event.data.type === 'NEXT_PLAYER') {
-            // Reset dice roller for next player
-            elem.result.innerHTML = '';
-            elem.textInput.value = '1d20';
-            box.setDice('1d20');
-            show_instructions(true);
-            show_numPad(false);
-        }
-    });
     var box = null;
 
     that.init = function() {
@@ -201,31 +189,8 @@ window.onkeydown = function(e) {
             elem.result.innerHTML = "Oops, your dice fell off the table. <br> Refresh and roll again."
         } else {
             elem.result.innerHTML = notation.resultString;
-            
-            // Send result to parent window
-            if (window.parent && window.parent !== window) {
-                window.parent.postMessage({
-                    type: 'DICE_ROLL_RESULT',
-                    result: notation.result[0], // Send first die result (for d20)
-                    total: notation.resultTotal,
-                    notation: notation
-                }, '*');
-            }
         }
     }
 
     return that;
 }());
-
-// Listen for messages from parent window
-window.addEventListener('message', function(event) {
-    // Verify the message origin if needed
-    if (event.data.type === 'NEXT_PLAYER') {
-        // Reset the dice roller for the next player
-        elem.result.innerHTML = '';
-        elem.textInput.value = '1d20'; // Set default to d20
-        box.setDice('1d20');
-        show_instructions(true);
-        show_numPad(false);
-    }
-});

@@ -3,6 +3,15 @@ import { db, getUserById } from "~/services/db.server";
 import type { Room, PlayerSlot, ScenarioForDisplay, DiceRollingState } from "~/types";
 import { generateUniqueCode } from "~/utils/dice"; // Assuming this utility exists for code generation
 import { requireUser } from "~/services/auth.server"; // Import required for action context if needed elsewhere
+import { 
+  startDiceRolling, 
+  recordDiceRoll, 
+  getDiceRollingState, 
+  getRoomDiceResults, 
+  checkTiebreakerCompletion, 
+  clearRoomDiceRolls, 
+  getPlayerSlotInfo 
+} from "~/services/dice.server";
 
 // Define the structure for a participant within the room's participants JSONB array
 interface RoomParticipant {
@@ -25,6 +34,8 @@ export interface DBRoom {
     participants: RoomParticipant[]; // Now typed
     setup_slots: PlayerSlot[]; // Crucial field for persistence
     active_slots: number | null; // ADDED: New column for cleanup verification
+    scenarios?: ScenarioForDisplay[];
+    dice_rolling_state?: DiceRollingState | null;
 }
 
 // Define the threshold for considering a participant active (e.g., last 7 seconds)
@@ -41,6 +52,16 @@ async function generateUniqueCode(): Promise<string> {
         result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     // In a real implementation, you MUST check if this code exists in the DB.
+    return result;
+}
+
+// Synchronous code generation for faster room creation
+function generateUniqueCodeSync(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 6; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
     return result;
 }
 
@@ -154,16 +175,23 @@ function calculateInactivityCleanup(room: DBRoom, activeUserId?: string): { upda
         let hasOrphanedSlots = false;
         updatedSetupSlots.forEach((slot, index) => {
             if (slot.characterId && !currentCharacterIds.has(slot.characterId)) {
-                // Additional check: only reset if the slot is not already 'None'
-                if (slot.type !== 'None') {
-                    console.log(`[SLOT CLEANUP] Room ${room.code}: Resetting orphaned slot ${index} (Char ID: ${slot.characterId.substring(0, 8)}) from ${slot.type} to None.`);
-                    updatedSetupSlots[index] = {
-                        type: 'None',
-                        characterId: null,
-                        isReady: false,
-                    };
-                    hasOrphanedSlots = true;
-                    needsDBUpdate = true;
+                const hostIsActive = newParticipants.some(p => p.userId === room.host_id);
+
+                // Do not reset AI slots if the host is active.
+                if (slot.type === 'AI' && hostIsActive) {
+                    // it's an AI slot and the host is here, so we don't touch it.
+                } else {
+                    // Additional check: only reset if the slot is not already 'None'
+                    if (slot.type !== 'None') {
+                        console.log(`[SLOT CLEANUP] Room ${room.code}: Resetting orphaned slot ${index} (Char ID: ${slot.characterId.substring(0, 8)}) from ${slot.type} to None.`);
+                        updatedSetupSlots[index] = {
+                            type: 'None',
+                            characterId: null,
+                            isReady: false,
+                        };
+                        hasOrphanedSlots = true;
+                        needsDBUpdate = true;
+                    }
                 }
             }
         });
@@ -238,7 +266,7 @@ async function persistRoomUpdate(roomCode: string, updates: Partial<DBRoom>): Pr
         .from('rooms')
         .update(updatePayload)
         .eq('code', roomCode)
-        .select(`id, name, code, owner_id, user_id, status, created_at, updated_at, participants, setup_slots, active_slots`)
+        .select(`id, name, code, owner_id, user_id, status, created_at, updated_at, participants, setup_slots, active_slots, scenarios, dice_rolling_state`)
         .single();
 
     if (updateError) {
@@ -419,7 +447,7 @@ export async function updateSlotReadiness(roomCode: string, slotIndex: number, i
             updated_at: nowISO,
         })
         .eq('code', roomCode)
-        .select(`id, name, code, owner_id, user_id, status, created_at, updated_at, participants, setup_slots, active_slots`)
+        .select(`id, name, code, owner_id, user_id, status, created_at, updated_at, participants, setup_slots, active_slots, scenarios, dice_rolling_state`)
         .single();
 
     if (updateError) {
@@ -455,7 +483,7 @@ export async function updateRoomSlots(roomCode: string, updatedSlots: PlayerSlot
             updated_at: nowISO,
         })
         .eq('code', roomCode)
-        .select(`id, name, code, owner_id, user_id, status, created_at, updated_at, participants, setup_slots, active_slots`)
+        .select(`id, name, code, owner_id, user_id, status, created_at, updated_at, participants, setup_slots, active_slots, scenarios, dice_rolling_state`)
         .single();
 
     if (updateError) {
@@ -497,7 +525,7 @@ export async function updateSpecificSlot(roomCode: string, slotIndex: number, ne
             updated_at: nowISO,
         })
         .eq('code', roomCode)
-        .select(`id, name, code, owner_id, user_id, status, created_at, updated_at, participants, setup_slots, active_slots`)
+        .select(`id, name, code, owner_id, user_id, status, created_at, updated_at, participants, setup_slots, active_slots, scenarios, dice_rolling_state`)
         .single();
 
     if (updateError) {
@@ -550,7 +578,7 @@ export async function synchronizeUserSlots(roomCode: string, userId: string, use
 export async function getRoomByCode(code: string): Promise<DBRoom | null> {
     const { data, error } = await db
         .from('rooms')
-.select(`id, name, code, owner_id, user_id, host_id, status, created_at, updated_at, participants, setup_slots, active_slots`)
+.select(`id, name, code, owner_id, user_id, host_id, status, created_at, updated_at, participants, setup_slots, active_slots, scenarios, dice_rolling_state`)
         .eq('code', code)
         .single();
 
@@ -682,36 +710,28 @@ export async function handleRoomAction(request: Request, options: HandleRoomActi
     if (!hostSlot || !hostSlot.characterId) {
         throw new Error("Room creation failed: At least one Human character must be selected and ready to host the room.");
     }
-    
-    const hostCharacterId = hostSlot.characterId;
 
-    // 2. Generate Unique Code
-    const roomCode = await generateUniqueCode(); 
+    // 2. Generate Unique Code (Optimized for performance)
+    // Use a faster code generation method that doesn't require database checks
+    const roomCode = generateUniqueCodeSync(); 
 
-    // 3. Determine Host Participant (The creator is always the first participant)
-    const newParticipant: RoomParticipant = {
+    // 3. Determine Host Participants (all active slots are controlled by the creator)
+    const newParticipants: RoomParticipant[] = activeSlots.map(slot => ({
         userId: userId,
-        characterId: hostCharacterId,
-        lastActive: new Date().toISOString(), // Initialize last active time
-    };
-
-    // Fetch the username for the host user
-    const hostUser = await getUserById(userId);
-    const hostUsername = hostUser?.username;
+        characterId: slot.characterId!,
+        lastActive: new Date().toISOString(),
+    }));
 
     // 4. Prepare Room Data for DB Insertion
-    // NOTE: We use the full slots array, including AI slots and other ready human slots.
-    // Update slots to include userId and username for all active slots
+    // Update slots to include userId for all active slots managed by the host
+    // Skip username fetching during creation for performance - it will be fetched when needed
     const updatedSlots = slots.map((slot) => {
         if ((slot.type === 'Human' || slot.type === 'AI') && slot.characterId) {
-            // For the host slot, add userId and username
-            if (slot.characterId === hostCharacterId) {
-                return {
-                    ...slot,
-                    userId: userId,
-                    username: hostUsername,
-                };
-            }
+            return {
+                ...slot,
+                userId: userId,
+                username: undefined, // Will be populated when room is loaded
+            };
         }
         return slot;
     });
@@ -719,12 +739,12 @@ export async function handleRoomAction(request: Request, options: HandleRoomActi
     const roomData = {
         name: roomName,
         code: roomCode,
-        owner_id: userId, // Set owner_id
-        user_id: userId,  // Set user_id to satisfy NOT NULL constraint
-        host_id: userId,  // Set host_id to identify the host
-        participants: [newParticipant],
-        setup_slots: updatedSlots, // Storing slots as JSONB with username enrichment
-        active_slots: newActiveSlotsCount, // NEW: Store initial active slots count
+        owner_id: userId,
+        user_id: userId,
+        host_id: userId,
+        participants: newParticipants,
+        setup_slots: updatedSlots,
+        active_slots: newActiveSlotsCount,
     };
 
     const { data, error } = await db
@@ -738,6 +758,8 @@ export async function handleRoomAction(request: Request, options: HandleRoomActi
         throw new Error(`Failed to create room: ${error.message}`);
     }
 
+    console.log(`[ROOM CREATION] Room ${data.code} created successfully for user ${userId.substring(0, 8)}`);
+    
     // Redirect user to the game/lobby view using the new room code
     throw redirect(`/game?roomCode=${data.code}`);
 
@@ -1186,6 +1208,28 @@ export async function hasRoomScenarios(roomCode: string): Promise<boolean> {
     }
 }
 
+/**
+ * Inserts a chat message into the room_chat table
+ */
+export async function insertChatMessage(roomCode: string, userId: string, username: string, message: string): Promise<boolean> {
+    const { error } = await db
+        .from('room_chat')
+        .insert({
+            code: roomCode,
+            user_id: userId,
+            username: username,
+            message: message,
+            message_type: 'text',
+            created_at: new Date().toISOString()
+        });
+
+    if (error) {
+        console.error("Error inserting chat message:", error);
+        return false;
+    }
+    return true;
+}
+
 // DICE ROLLING STATE MANAGEMENT FUNCTIONS
 
 /**
@@ -1242,6 +1286,12 @@ export async function startDiceRolling(roomCode: string): Promise<boolean> {
             }
         }
 
+        // Guard against empty players array
+        if (players.length === 0) {
+            console.error(`[startDiceRolling] No players found for room ${roomCode}. No Human or AI slots available.`);
+            return false;
+        }
+
         // Initialize dice rolling state
         const diceRollingState: DiceRollingState = {
             status: 'rolling',
@@ -1252,16 +1302,42 @@ export async function startDiceRolling(roomCode: string): Promise<boolean> {
         };
 
         // Update room record with new state
-        const { error: updateError } = await db
-            .from('rooms')
-            .update({ 
-                dice_rolling_state: diceRollingState,
-                updated_at: new Date().toISOString()
-            })
-            .eq('code', roomCode);
+        // Update room record with new state with retry logic
+        let updateSuccess = false;
+        const maxRetries = 3;
+        const retryDelay = 1000;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const { error: updateError } = await db
+                    .from('rooms')
+                    .update({ 
+                        dice_rolling_state: diceRollingState,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('code', roomCode);
 
-        if (updateError) {
-            console.error("Error updating room dice rolling state:", updateError);
+                if (updateError) {
+                    console.error(`Attempt ${attempt}/${maxRetries} - Error updating room dice rolling state:`, updateError);
+                    if (attempt === maxRetries) {
+                        return false;
+                    }
+                    await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+                    continue;
+                }
+                
+                updateSuccess = true;
+                break;
+            } catch (updateError) {
+                console.error(`Attempt ${attempt}/${maxRetries} - Exception updating room dice rolling state:`, updateError);
+                if (attempt === maxRetries) {
+                    throw updateError;
+                }
+                await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+            }
+        }
+
+        if (!updateSuccess) {
             return false;
         }
 
@@ -1273,7 +1349,7 @@ export async function startDiceRolling(roomCode: string): Promise<boolean> {
 }
 
 /**
- * Record an individual dice roll for a player
+ * Record an individual dice roll for a player with retry logic
  */
 export async function recordDiceRoll(
     roomCode: string, 
@@ -1282,123 +1358,195 @@ export async function recordDiceRoll(
     slotIndex: number, 
     diceResult: number, 
     diceType: string, 
-    rollReason: string // Parameter for future extensibility
+    rollReason: string
 ): Promise<boolean> {
     try {
-        // Fetch current dice rolling state
-        const { data: roomData, error: roomError } = await db
-            .from('rooms')
-            .select('dice_rolling_state')
-            .eq('code', roomCode)
-            .single();
+        const maxRetries = 3;
+        const retryDelay = 1000; // 1 second
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            const { data: roomData, error: roomError } = await db
+                .from('rooms')
+                .select('dice_rolling_state, host_id')
+                .eq('code', roomCode)
+                .single();
 
-        if (roomError || !roomData || !roomData.dice_rolling_state) {
-            console.error("Room or dice rolling state not found:", roomError);
-            return false;
-        }
+            if (roomError || !roomData || !roomData.dice_rolling_state) {
+                console.error(`Attempt ${attempt}/${maxRetries} - Room or dice rolling state not found:`, roomError);
+                if (attempt === maxRetries) {
+                    return false;
+                }
+                await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+                continue;
+            }
 
-        const diceRollingState: DiceRollingState = roomData.dice_rolling_state;
+            const diceRollingState: DiceRollingState = roomData.dice_rolling_state;
+            const hostId = roomData.host_id;
 
-        // Validate player exists in players array
-        const playerIndex = diceRollingState.players.findIndex((p: { slotIndex: number; userId: string }) => 
-            p.slotIndex === slotIndex && p.userId === userId
-        );
+            const playerIndex = diceRollingState.players.findIndex((p: { slotIndex: number; userId: string }) => 
+                p.slotIndex === slotIndex && p.userId === userId
+            );
 
-        if (playerIndex === -1) {
-            console.error("Player not found in dice rolling state");
-            return false;
-        }
+            if (playerIndex === -1) {
+                console.error("Player not found in dice rolling state");
+                return false;
+            }
 
-        // Validate player hasn't already rolled
-        if (diceRollingState.rolls[slotIndex] !== undefined) {
-            console.error("Player has already rolled");
-            return false;
-        }
+            if (diceRollingState.rolls[slotIndex] !== undefined) {
+                console.error("Player has already rolled");
+                return false;
+            }
 
-        // Validate dice result (1-20 for d20)
-        if (diceType === 'd20' && (diceResult < 1 || diceResult > 20)) {
-            console.error("Invalid dice result:", diceResult);
-            return false;
-        }
+            if (diceType === 'd20' && (diceResult < 1 || diceResult > 20)) {
+                console.error("Invalid dice result:", diceResult);
+                return false;
+            }
 
-        // Add roll to rolls object
-        diceRollingState.rolls[slotIndex] = diceResult;
+            diceRollingState.rolls[slotIndex] = diceResult;
 
-        // Check if all players have rolled
-        const allPlayersRolled = diceRollingState.players.every((player: { slotIndex: number }) => 
-            diceRollingState.rolls[player.slotIndex] !== undefined
-        );
+            const allPlayersRolled = diceRollingState.players.every((player: { slotIndex: number }) => 
+                diceRollingState.rolls[player.slotIndex] !== undefined
+            );
 
-        if (allPlayersRolled) {
-            // Determine winner (highest roll, handle ties by earliest roll)
-            let maxRoll = -1;
-            let winnerIndex = -1;
-            
-            for (const player of diceRollingState.players) {
-                const playerRoll = diceRollingState.rolls[player.slotIndex];
-                if (playerRoll !== undefined && playerRoll > maxRoll) {
-                    maxRoll = playerRoll;
-                    winnerIndex = player.slotIndex;
+            if (allPlayersRolled) {
+                console.log('All players have rolled, determining winner...');
+                let maxRoll = -1;
+                let potentialWinners: { slotIndex: number; userId: string }[] = [];
+
+                for (const player of diceRollingState.players) {
+                    const playerRoll = diceRollingState.rolls[player.slotIndex];
+                    if (playerRoll !== undefined) {
+                        console.log(`Player ${player.slotIndex} rolled ${playerRoll}`);
+                        if (playerRoll > maxRoll) {
+                            maxRoll = playerRoll;
+                            potentialWinners = [{ slotIndex: player.slotIndex, userId: player.userId }];
+                        } else if (playerRoll === maxRoll) {
+                            potentialWinners.push({ slotIndex: player.slotIndex, userId: player.userId });
+                        }
+                    }
+                }
+
+                console.log(`Max roll: ${maxRoll}, potential winners: ${potentialWinners.length}`);
+
+                let winnerIndex = -1;
+                if (potentialWinners.length === 1) {
+                    winnerIndex = potentialWinners[0].slotIndex;
+                    console.log(`Single winner: ${winnerIndex}`);
+                } else if (potentialWinners.length > 1) {
+                    const hostWinner = potentialWinners.find(p => p.userId === hostId);
+                    if (hostWinner) {
+                        winnerIndex = hostWinner.slotIndex;
+                        console.log(`Host winner in tie: ${winnerIndex}`);
+                    } else {
+                        // If host is not in the tie, default to the first person who rolled that score
+                        winnerIndex = potentialWinners[0].slotIndex;
+                        console.log(`First winner in tie: ${winnerIndex}`);
+                    }
+                }
+                
+                diceRollingState.winner = winnerIndex;
+                diceRollingState.status = 'completed';
+                console.log(`Dice rolling completed, winner: ${winnerIndex}, status: ${diceRollingState.status}`);
+            } else {
+                let nextPlayerIndex = diceRollingState.currentPlayerIndex;
+                do {
+                    nextPlayerIndex = (nextPlayerIndex + 1) % diceRollingState.players.length;
+                } while (
+                    nextPlayerIndex !== diceRollingState.currentPlayerIndex &&
+                    diceRollingState.rolls[diceRollingState.players[nextPlayerIndex].slotIndex] !== undefined
+                );
+                
+                diceRollingState.currentPlayerIndex = nextPlayerIndex;
+            }
+
+            // Update room record with new state with retry logic
+            let updateSuccess = false;
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    const { error: updateError } = await db
+                        .from('rooms')
+                        .update({ 
+                            dice_rolling_state: diceRollingState,
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('code', roomCode);
+
+                    if (updateError) {
+                        console.error(`Attempt ${attempt}/${maxRetries} - Error updating room dice rolling state:`, updateError);
+                        if (attempt === maxRetries) {
+                            return false;
+                        }
+                        await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+                        continue;
+                    }
+                    
+                    updateSuccess = true;
+                    break;
+                } catch (updateError) {
+                    console.error(`Attempt ${attempt}/${maxRetries} - Exception updating room dice rolling state:`, updateError);
+                    if (attempt === maxRetries) {
+                        throw updateError;
+                    }
+                    await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
                 }
             }
-            
-            diceRollingState.winner = winnerIndex;
-            diceRollingState.status = 'completed';
-        } else {
-            // Advance to next player
-            let nextPlayerIndex = diceRollingState.currentPlayerIndex;
-            do {
-                nextPlayerIndex = (nextPlayerIndex + 1) % diceRollingState.players.length;
-            } while (
-                nextPlayerIndex !== diceRollingState.currentPlayerIndex &&
-                diceRollingState.rolls[diceRollingState.players[nextPlayerIndex].slotIndex] !== undefined
-            );
-            
-            diceRollingState.currentPlayerIndex = nextPlayerIndex;
+
+            if (!updateSuccess) {
+                return false;
+            }
+
+            return true;
         }
-
-        // Persist updated dice rolling state
-        const { error: updateError } = await db
-            .from('rooms')
-            .update({ 
-                dice_rolling_state: diceRollingState,
-                updated_at: new Date().toISOString()
-            })
-            .eq('code', roomCode);
-
-        if (updateError) {
-            console.error("Error updating room dice rolling state:", updateError);
-            return false;
-        }
-
-        return true;
+        
     } catch (error) {
         console.error("Error recording dice roll:", error);
         return false;
     }
+    return false;
 }
 
 /**
- * Get current dice rolling state for a room
+ * Get current dice rolling state for a room with retry logic
  */
 export async function getDiceRollingState(roomCode: string): Promise<DiceRollingState | null> {
-    try {
-        const { data, error } = await db
-            .from('rooms')
-            .select('dice_rolling_state')
-            .eq('code', roomCode)
-            .single();
+    const maxRetries = 3;
+    const retryDelay = 1000; // 1 second
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const { data, error } = await db
+                .from('rooms')
+                .select('dice_rolling_state')
+                .eq('code', roomCode)
+                .single();
 
-        if (error || !data) {
-            console.error("Error fetching dice rolling state:", error);
-            return null;
+            if (error || !data) {
+                console.error(`Attempt ${attempt}/${maxRetries} - Error fetching dice rolling state:`, error);
+                
+                if (attempt === maxRetries) {
+                    return null;
+                }
+                
+                // Wait before retrying
+                await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+                continue;
+            }
+
+            console.log('Returning dice rolling state:', data.dice_rolling_state);
+            return data.dice_rolling_state || null;
+        } catch (error) {
+            console.error(`Attempt ${attempt}/${maxRetries} - Exception getting dice rolling state:`, error);
+            
+            if (attempt === maxRetries) {
+                throw error; // Re-throw on final attempt
+            }
+            
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
         }
-
-        return data.dice_rolling_state || null;
-    } catch (error) {
-        console.error("Error getting dice rolling state:", error);
-        return null;
     }
+    
+    return null;
 }
 
 /**
@@ -1582,24 +1730,3 @@ export async function updateCharacterCoordinates(roomCode: string, characterId: 
     }
 }
 
-/**
- * Update room scenarios
- */
-export async function updateRoomScenarios(roomCode: string, scenarios: any[]): Promise<boolean> {
-    try {
-        const { error } = await db
-            .from('rooms')
-            .update({ scenarios })
-            .eq('code', roomCode);
-
-        if (error) {
-            console.error("Error updating room scenarios:", error);
-            return false;
-        }
-
-        return true;
-    } catch (error) {
-        console.error("Error updating room scenarios:", error);
-        return false;
-    }
-}

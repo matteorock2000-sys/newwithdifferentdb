@@ -1,10 +1,11 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import type { DiceRollingState } from '~/types';
+import { useGlobalToast } from '~/utils/toast';
 
 /** @jsxImportSource react */
 
 interface DiceRoller3DProps {
-  onPlayerRollComplete: (slotIndex: number, result: number) => void;
+  onPlayerRollComplete: (slotIndex: number, result: number, userId: string) => void;
   players: Array<{ slotIndex: number; characterName: string; userId: string; hasRolled: boolean; result?: number }>;
   currentUserId: string;
   diceState: DiceRollingState | null;
@@ -16,193 +17,68 @@ export default function DiceRoller3D({
   players, 
   currentUserId, 
   diceState,
-  showRollButton = true
+  showRollButton = false
 }: DiceRoller3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const diceBoxRef = useRef<any>(null);
+  const diceIframeRef = useRef<HTMLIFrameElement>(null);
   const [isRolling, setIsRolling] = useState(false);
-  const [rollingDice, setRollingDice] = useState<Record<number, number>>({});
+  const { showToast } = useGlobalToast();
+  const iframeReadyRef = useRef(false);
   
-  // Consolidated handleRollDice
-  const handleRollDice = useCallback((slotIndex: number) => {
-    setIsRolling(true);
-    setRollingDice({}); // Clear previous rolling state
-
-    if (diceBoxRef.current) {
-      // Use 3D dice
-      diceBoxRef.current.roll()
-        .then((results: any) => {
-          console.log('3D dice roll initiated:', results);
-          // after_roll callback in useEffect will handle onPlayerRollComplete
-        })
-        .catch((error: any) => {
-          console.error('Error during 3D dice roll:', error);
-          // Fallback to simulated roll on error
-          const result = Math.floor(Math.random() * 20) + 1;
-          setTimeout(() => {
-            setIsRolling(false);
-            onPlayerRollComplete(slotIndex, result);
-          }, 1000);
-        });
-    } else {
-      // Fallback to simulated roll if 3D dice not available or failed to load
-      console.warn('3D dice library not available, using visual fallback');
-      const result = Math.floor(Math.random() * 20) + 1;
-      setTimeout(() => {
-        setIsRolling(false);
-        onPlayerRollComplete(slotIndex, result);
-      }, 1000); // Simulate 1 second roll animation
-    }
-  }, [onPlayerRollComplete]);
-
-  // useEffect for 3D dice library initialization and setup
   useEffect(() => {
-    let isMounted = true;
-    let diceBoxInstance: any = null; // Declare here to be accessible in cleanup
-
-    const loadScript = (src: string): Promise<void> => {
-      return new Promise((resolve, reject) => {
-        const existingScript = document.querySelector(`script[src="${src}"]`);
-        if (existingScript) {
-          resolve();
-          return;
-        }
-        
-        const script = document.createElement('script');
-        script.src = src;
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error(`Failed to load ${src}`));
-        document.head.appendChild(script);
-      });
-    };
-    
-    const createDiceBox = () => {
-      if (!containerRef.current || typeof (window as any).DICE === 'undefined') return;
+    const handleMessage = (event: MessageEvent) => {
+      const { type, result } = event.data;
       
-      try {
-        diceBoxInstance = new (window as any).DICE.dice_box(
-          containerRef.current,
-          {
-            baseSize: 60,
-            colorset: {
-              background: '#111827', 
-              backgroundTransparency: 0.8,
-              top: '#f59e0b', 
-              topTransparency: 0.9,
-              left: '#d97706', 
-              leftTransparency: 0.9,
-              right: '#fbbf24', 
-              rightTransparency: 0.9,
-              outline: '#111827', 
-              outlineTransparency: 0.8,
-              spot: '#111827', 
-              spotTransparency: 0.8,
-              border: '#f59e0b', 
-              borderTransparency: 0.8,
-              pip: '#111827', 
-              pipTransparency: 0.8,
-            },
-            notation: `1d20`,
-            physics: {
-              gravity: [0, -1000, 0],
-              timeStep: 1 / 60,
-              broadphase: 'Naive',
-              friction: 0.9,
-              restitution: 0.2,
-              sleepSpeedLimit: 0.1,
-              sleepTimeLimit: 1,
-              solver: 'GSS',
-              iterations: 10,
-              defaultContactMaterial: {
-                friction: 0.9,
-                restitution: 0.2,
-                contactEquationStiffness: 1e8,
-                contactEquationRelaxation: 3,
-              },
-            },
-          }
-        );
-        diceBoxRef.current = diceBoxInstance;
-        
-        if (diceBoxInstance && typeof diceBoxInstance.bind_swipe === 'function') {
-          diceBoxInstance.bind_swipe(containerRef.current, before_roll, after_roll);
-          console.log('3D dice box created successfully');
+      if (type === 'DICE_ROLL_RESULT') {
+        setIsRolling(false);
+        const currentPlayer = diceState?.players[diceState.currentPlayerIndex];
+        if (currentPlayer && result !== undefined) {
+          onPlayerRollComplete(currentPlayer.slotIndex, result, currentPlayer.userId);
         }
-      } catch (error) {
-        console.error('Failed to create 3D dice box:', error);
+      } else if (type === 'roll_started') {
+        setIsRolling(true);
+      } else if (type === 'iframe_ready') {
+        iframeReadyRef.current = true;
+        showToast('3D dice rolling is ready! Click or swipe to roll.', 'success');
+        if (diceIframeRef.current?.contentWindow) {
+          diceIframeRef.current.contentWindow.postMessage({
+            type: 'set_viewer_user_id',
+            userId: currentUserId,
+          }, '*');
+        }
+      } else if (type === 'iframe_init_failed') {
+        showToast(`3D dice rolling failed: ${event.data.error}. Using fallback method.`, 'error');
       }
     };
 
-    const before_roll = () => {
-      setIsRolling(true);
-      return null;
-    };
-    
-    const after_roll = (notation: any, result: number[]) => {
-      setIsRolling(false);
-      // Find the current player who needs to roll
-      const currentPlayer = players.find(p => p.userId === currentUserId && !p.hasRolled);
-      if (currentPlayer && result.length > 0) {
-        onPlayerRollComplete(currentPlayer.slotIndex, result[0]);
-      }
-    };
+    window.addEventListener('message', handleMessage);
 
-    const initialize3DDice = async () => {
-      try {
-        if (typeof (window as any).DICE !== 'undefined') {
-          if (isMounted) {
-            console.log('3D dice library already available or loaded');
-            createDiceBox();
-          }
-          return;
-        }
-        
-        const scripts = [
-          '/libs/three.min.js',
-          '/libs/cannon.min.js',
-          '/libs/teal.js',
-          '/dice.js'
-        ];
-        
-        for (const src of scripts) {
-          await loadScript(src);
-        }
-        
-        setTimeout(() => {
-          if (isMounted && typeof (window as any).DICE !== 'undefined') {
-            console.log('3D dice library loaded successfully');
-            createDiceBox();
-          } else if (isMounted) {
-            console.log('3D dice library not available, using visual fallback');
-          }
-        }, 300);
-      } catch (error) {
-        console.error('Error loading 3D dice library:', error);
-        if (isMounted) {
-          console.log('3D dice library failed to load, using visual fallback');
-        }
-      }
-    };
-    
-    initialize3DDice();
-    
     return () => {
-      isMounted = false;
-      if (diceBoxInstance && typeof diceBoxInstance.dispose === 'function') {
-        diceBoxInstance.dispose();
-      }
+      window.removeEventListener('message', handleMessage);
     };
-  }, [players, currentUserId, onPlayerRollComplete]);
+  }, [onPlayerRollComplete, currentUserId, diceState, showToast]);
+
+  useEffect(() => {
+    if (diceIframeRef.current?.contentWindow && diceState?.status === 'rolling') {
+      const currentPlayer = diceState.players[diceState.currentPlayerIndex];
+      if (currentPlayer) {
+        diceIframeRef.current.contentWindow.postMessage({
+          type: 'set_roll_context',
+          userId: currentPlayer.userId,
+          slotIndex: currentPlayer.slotIndex,
+        }, '*');
+      }
+    }
+  }, [diceState]);
   
   return (
     <div className="dice-roller-3d">
-      {/* Per-player results grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         {players.map((player) => {
           const isCurrentPlayer = diceState && diceState.players[diceState.currentPlayerIndex]?.slotIndex === player.slotIndex;
           const isCurrentUser = player.userId === currentUserId;
-          const hasRolled = player.hasRolled || rollingDice[player.slotIndex] !== undefined;
-          const result = player.result || rollingDice[player.slotIndex];
+          const hasRolled = player.hasRolled;
+          const result = player.result;
           
           return (
             <div 
@@ -231,7 +107,7 @@ export default function DiceRoller3D({
                     {player.characterName}
                   </div>
                 </div>
-                {diceState && diceState.players[diceState.currentPlayerIndex]?.slotIndex === player.slotIndex && (
+                {isCurrentPlayer && (
                   <div className="text-blue-300 font-semibold">
                     Your Turn!
                   </div>
@@ -250,15 +126,9 @@ export default function DiceRoller3D({
                 )}
               </div>
               
-              {diceState && diceState.players[diceState.currentPlayerIndex]?.slotIndex === player.slotIndex && showRollButton && (
-                <div className="mt-3">
-                  <button
-                    onClick={() => handleRollDice(player.slotIndex)}
-                    disabled={isRolling || hasRolled}
-                    className="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded transition duration-200"
-                  >
-                    {isRolling ? '🎲 Rolling...' : '🎲 Roll D20'}
-                  </button>
+              {isCurrentPlayer && !hasRolled && (
+                <div className="mt-3 text-center text-yellow-400">
+                  Click the dice below to roll!
                 </div>
               )}
             </div>
@@ -266,29 +136,20 @@ export default function DiceRoller3D({
         })}
       </div>
       
-      {/* 3D Dice Container */}
       <div 
         ref={containerRef} 
-        className="w-full h-64 bg-gray-900 rounded-lg relative overflow-hidden border-4 border-yellow-500"
-        style={{ minHeight: '256px' }}
-      />
-      
-      {/* Completion message */}
-      {diceState && diceState.status === 'completed' && (
-        <div className="mt-4 text-center">
-          <div className="bg-green-600 text-white font-bold py-3 px-6 rounded-lg inline-block">
-            Winner: {diceState.players[diceState.winner!]?.characterName} with {diceState.rolls[diceState.winner!]}!
-          </div>
-        </div>
-      )}
-      
-      {/* Visual feedback for rolling dice */}
-      {isRolling && (
-        <div className="mt-4 text-center">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-400"></div>
-          <p className="mt-2 text-yellow-300 text-sm">Rolling dice...</p>
-        </div>
-      )}
+        className={`w-full h-80 bg-blue-500 rounded-xl relative overflow-hidden border-4 transition-all duration-500 border-blue-500`}
+        style={{ minHeight: '320px', height: '45vh', zIndex: 9998 }}
+        onClick={() => console.log('[DiceRoller3D] Container clicked!')}
+      >
+        <iframe
+          ref={diceIframeRef}
+          src="/dice-roller-bridge.html"
+          title="3D Dice Roller"
+          className="w-full h-full border-4 border-red-500"
+          style={{ zIndex: 9999, pointerEvents: 'auto !important' }}
+        />
+      </div>
     </div>
   );
 }

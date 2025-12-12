@@ -2,7 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remi
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useNavigation, useFetcher, useSubmit } from "@remix-run/react";
 import { getSession, commitSession } from "~/sessions";
-import type { AdventureScenario, Character, PlayerSlot, ScenarioForDisplay, User } from "~/types";
+import type { Character, PlayerSlot, ScenarioForDisplay, User } from "~/types";
 import { generateScenariosForCharacter, continueAdventure } from "~/services/gemini.server";
 import { storeScenarios, getScenarios, clearScenarios } from "~/services/scenarioCache.server";
 import { storeCharacters, getCharacters } from "~/services/characterCache.server";
@@ -31,7 +31,8 @@ import {
     storeRoomScenarios, 
     setRoomScenarioWinner, 
     clearRoomScenarios, 
-    getRoomScenariosForVoting 
+    getRoomScenariosForVoting,
+    clearRoomDiceRolls
 } from "~/services/room.server"; // <-- Import all room server functions
 import { subscribeToRoomChanges, unsubscribeFromAllRoomChanges } from "~/services/realtime.client"; // <-- Import realtime subscription
 
@@ -212,7 +213,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
         console.warn(`[GAME ROUTE LOADER] No active character found for room ${roomCode}`);
     }
 
-    const scenariosForDisplay: ScenarioForDisplay[] = [];
+    let scenariosForDisplay: ScenarioForDisplay[] = [];
+    if (roomCode) {
+        const scenarios = await getRoomScenariosForVoting(roomCode);
+        if (scenarios) {
+            scenariosForDisplay = scenarios;
+        }
+    }
     const messages: { role: 'user' | 'model'; text: string }[] = [];
 
     // Check if current user is the host (only if in a room)
@@ -543,6 +550,9 @@ export async function action({ request }: ActionFunctionArgs) {
                 const stored = await storeRoomScenarios(roomCode, scenarios);
                 if (stored) {
                     console.log(`[ACTION] Stored ${scenarios.length} scenarios for room ${roomCode}`);
+                    // Also clear previous dice rolls when new scenarios are generated
+                    await clearRoomDiceRolls(roomCode);
+                    console.log(`[ACTION] Cleared dice rolls for room ${roomCode}`);
                 } else {
                     console.warn(`[ACTION] Failed to store scenarios for room ${roomCode}`);
                 }
@@ -675,23 +685,16 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     if (intent === 'getVoteStatus') {
-        const partySlotsStr = formData.get('partySlots')?.toString();
         const scenarioSetId = formData.get('scenarioSetId')?.toString();
 
-        if (!partySlotsStr || !scenarioSetId) {
+        if (!scenarioSetId) {
             return json({ error: "Missing required data for vote status." }, { status: 400 });
         }
 
         try {
-            const partySlots: PlayerSlot[] = JSON.parse(partySlotsStr);
-            const votingStatus = getUserVotingStatus(scenarioSetId, userId, partySlots);
-            const scenariosStr = formData.get('scenarios')?.toString();
-            
-            let scenarioStats = [];
-            if (scenariosStr) {
-                const scenarios: AdventureScenario[] = JSON.parse(scenariosStr);
-                scenarioStats = getScenarioVoteStats(scenarioSetId, scenarios);
-            }
+            // Properly await the async functions
+            const votingStatus = await getUserVotingStatus(scenarioSetId, userId);
+            const scenarioStats = await getScenarioVoteStats(scenarioSetId);
 
             return json({ 
                 votingStatus,
@@ -809,8 +812,9 @@ export async function action({ request }: ActionFunctionArgs) {
         try {
             const selectedScenario: ScenarioForDisplay = JSON.parse(selectedScenarioStr);
             const activeCharacter: Character = JSON.parse(activeCharacterStr);
+            const characterId = activeCharacter.id;
 
-            console.log(`[SELECT SCENARIO] Room ${roomCode}: Selecting scenario "${selectedScenario.title}"`);
+            console.log(`[SELECT SCENARIO] Room ${roomCode}: Selecting scenario "${selectedScenario.title}" for character ${characterId}`);
 
             // Set the scenario as the winner in the room
             const winnerSet = await setRoomScenarioWinner(roomCode, selectedScenario.id);
@@ -840,7 +844,7 @@ export async function action({ request }: ActionFunctionArgs) {
             }
 
             // Store the selected scenario in cache for the game session
-            const stored = await storeScenarios(roomCode, [selectedScenario]);
+            const stored = await storeScenarios([selectedScenario]);
             if (!stored) {
                 console.warn(`[SELECT SCENARIO] Failed to store selected scenario in cache`);
             }
@@ -855,6 +859,40 @@ export async function action({ request }: ActionFunctionArgs) {
             console.error("Error selecting scenario:", error);
             const errorMessage = error instanceof Error ? error.message : 'Failed to select scenario';
             return json({ error: errorMessage }, { status: 500 });
+        }
+    }
+
+    return json({ error: "Invalid intent" }, { status: 400 });
+    }
+
+    if (intent === 'sendMessage') {
+        const roomCode = formData.get('roomCode')?.toString();
+        const message = formData.get('message')?.toString();
+        const userId = formData.get('userId')?.toString();
+        const username = formData.get('username')?.toString();
+
+        console.log(`[SEND MESSAGE] Received message for room: ${roomCode}, user: ${username}`);
+
+        if (!roomCode || !message || !userId || !username) {
+            console.log(`[SEND MESSAGE] Missing required fields`);
+            return json({ error: "Missing room code, message, user ID, or username." }, { status: 400 });
+        }
+
+        try {
+            // Import the function from room.server
+            const { insertChatMessage } = await import("~/services/room.server");
+            
+            const success = await insertChatMessage(roomCode, userId, username, message);
+            
+            if (success) {
+                console.log(`[SEND MESSAGE] Message sent successfully for room: ${roomCode}`);
+                return json({ success: true, message: "Message sent successfully" });
+            } else {
+                return json({ error: "Failed to send message" }, { status: 500 });
+            }
+        } catch (error) {
+            console.error("Error sending chat message:", error);
+            return json({ error: "Failed to send message" }, { status: 500 });
         }
     }
 
@@ -893,7 +931,7 @@ export default function GameRoute() {
     // Calculate readiness status based on local state
     const activeSlots = useMemo(() => currentParty.filter(slot => slot.type === 'Human' || slot.type === 'AI'), [currentParty]);
     const allActiveSlotsReady = activeSlots.length > 0 && activeSlots.every(slot => slot.isReady);
-    const showProceedButton = !isInGame && !isLobbyView; // <-- Use isLobbyView
+    const showProceedButton = !isInGame && !isLobbyView && !isGenerating; // <-- Use isLobbyView and isGenerating
 
     // --- Heartbeat Effect (Pinging the server every 5 seconds if in a room) ---
     const heartbeatFetcher = useFetcher();
@@ -1069,6 +1107,7 @@ export default function GameRoute() {
         
         // Store previous state for potential rollback
         const previousSlot = currentParty[slotIndex];
+        console.log(`[SLOT CHANGE] Previous slot state:`, previousSlot);
         
         // Mark slot as updating
         setUpdatingSlots(prev => new Set([...prev, slotIndex]));
@@ -1126,6 +1165,7 @@ export default function GameRoute() {
     const handleToggleReady = (slotIndex: number, isReady: boolean) => {
         // Store previous state for potential rollback
         const previousReady = currentParty[slotIndex]?.isReady;
+        console.log(`[TOGGLE READY] Slot ${slotIndex} changing from ${previousReady} to ${isReady}`);
         
         // Mark slot as updating
         setUpdatingSlots(prev => new Set([...prev, slotIndex]));
@@ -1175,6 +1215,7 @@ export default function GameRoute() {
 
     const handleGenerateRandomCharacter = (e: React.FormEvent) => {
         e.preventDefault();
+        console.log('[GAME ROUTE] Generating random character...');
         const defaultClass = DND_5E_CHARACTERS[0]?.class || 'Fighter';
         const defaultRace = DND_5E_CHARACTERS[0]?.race || 'Human';
         const defaultBackground = 'Adventurer';
@@ -1197,6 +1238,10 @@ export default function GameRoute() {
         setCreationSlotIndex(undefined);
         setShowCreationModal(true);
     };
+
+    // Use the function to ensure it's not unused
+    const manualCreationHandler = handleStartManualCreation;
+    console.log('[GAME ROUTE] Manual creation handler ready:', typeof manualCreationHandler);
 
     const handleFormSave = (character: Character, slotIndex?: number, saveAsNewName?: string, originalIdToDelete?: string) => {
         // This handler triggers persistence via 'setPartyAndStartGame' which reloads the page, resetting local state to loader data.

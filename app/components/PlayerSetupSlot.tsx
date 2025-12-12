@@ -1,7 +1,7 @@
 import type { Character, PlayerSlot } from "~/types";
 import { DND_5E_CHARACTERS } from "~/data/dnd";
 import CharacterDisplayCard from "./CharacterDisplayCard";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 
 interface PlayerSetupSlotProps {
     slotIndex: number;
@@ -39,7 +39,7 @@ export default function PlayerSetupSlot({
     
     // Enhanced slot ownership logic
     const hasOwnershipData = !!currentUserId && !!userId;
-    const isOwnSlot = hasOwnershipData ? currentUserId === userId : !isLobbyView;
+    const isOwnSlot = hasOwnershipData ? currentUserId === userId : (isLobbyView ? !userId : true);
     const isSlotLocked = isLobbyView && !isOwnSlot;
 
     // Use user's own characters if available and it's their slot, otherwise use allCharacters (for display only)
@@ -78,6 +78,49 @@ export default function PlayerSetupSlot({
         );
         return charactersForSelection.filter(c => !occupiedIds.has(c.id));
     }, [charactersForSelection, allSlots, slotIndex]);
+
+    const handleTypeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+        if (isSlotLocked) return;
+        const newType = e.target.value as PlayerSlot['type'];
+        
+        let newCharacterId: string | null = null;
+        let newIsReady = false;
+        let newUserId: string | undefined = playerSlot.userId;
+        let newUsername: string | undefined = playerSlot.username;
+
+        if (newType === 'Human' || newType === 'AI') {
+            // 1. Try to keep the existing character if it's still valid/available
+            const currentCharacterStillAvailable = charactersForSelection.some(c => c.id === characterId) && 
+                                                 !allSlots.some((s, i) => i !== slotIndex && s.characterId === characterId);
+
+            if (characterId && currentCharacterStillAvailable) {
+                newCharacterId = characterId;
+            } else {
+                // 2. Assign the first available character
+                newCharacterId = availableCharacters.length > 0 ? availableCharacters[0].id : null;
+            }
+            newIsReady = true;
+        } else if (newType === 'None') {
+            newCharacterId = null;
+            newIsReady = false;
+            newUserId = undefined;
+            newUsername = undefined;
+        } else {
+            // For 'Join' slot, keep existing data
+            newCharacterId = characterId;
+            newIsReady = isReady;
+            newUserId = userId;
+            newUsername = username;
+        }
+
+        onSlotChange(slotIndex, {
+            type: newType,
+            characterId: newCharacterId,
+            isReady: newIsReady,
+            userId: newUserId,
+            username: newUsername
+        });
+    }, [isSlotLocked, characterId, charactersForSelection, allSlots, slotIndex, availableCharacters, isReady, userId, username, onSlotChange]);
 
     const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         if (isSlotLocked) return;
@@ -129,7 +172,7 @@ export default function PlayerSetupSlot({
         });
     };
 
-    const handleCharacterSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const handleCharacterSelect = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
         // Prevent character selection if this is a locked slot (another player's slot in lobby)
         if (isSlotLocked) return;
         const newCharacterId = e.target.value || null;
@@ -161,33 +204,44 @@ export default function PlayerSetupSlot({
             userId: newUserId,
             username: newUsername,
         });
-    };
+    }, [isSlotLocked, playerSlot, slotIndex, onSlotChange]);
 
-    const handleReadyToggle = () => {
+    const handleReadyToggle = useCallback(() => {
         if (isSlotLocked) return;
         // This calls the handler in rooms.tsx which updates local state
         onToggleReady(slotIndex, !isReady);
-    };
+    }, [isSlotLocked, slotIndex, isReady, onToggleReady]);
 
-    const handleCreateNew = () => {
+    const handleCreateNew = useCallback(() => {
         if (isSlotLocked) return;
         // This calls the handler in rooms.tsx to open the modal
         onEditCharacter({} as Character, slotIndex);
-    };
+    }, [isSlotLocked, onEditCharacter]);
 
-    const handleEdit = () => {
+    const handleEdit = useCallback(() => {
         if (isSlotLocked) return;
         if (selectedCharacter) {
             onEditCharacter(selectedCharacter, slotIndex);
         }
-    };
+    }, [isSlotLocked, selectedCharacter, slotIndex, onEditCharacter]);
 
-    const handleDelete = () => {
+    const handleDelete = useCallback(() => {
         if (isSlotLocked) return;
         if (selectedCharacter) {
             onDeleteCharacter(selectedCharacter.id);
         }
-    };
+    }, [isSlotLocked, selectedCharacter, onDeleteCharacter]);
+
+    const handleCharacterImport = useCallback(() => {
+        if (isSlotLocked) return;
+        setShowCharacterModal(true);
+    }, [isSlotLocked, setShowCharacterModal]);
+
+    const handleCharacterModalConfirm = useCallback((character: Character) => {
+        if (isSlotLocked) return;
+        onEditCharacter(character, slotIndex);
+        setShowCharacterModal(false);
+    }, [isSlotLocked, onEditCharacter, slotIndex, setShowCharacterModal]);
 
     const isHostSlot = slotIndex === 0; // Assuming slot 0 is the default host slot
     

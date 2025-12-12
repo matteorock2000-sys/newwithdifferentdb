@@ -220,4 +220,3 @@ teal.when = function(promises) {
     }
     return deferred.promise();
 }
-

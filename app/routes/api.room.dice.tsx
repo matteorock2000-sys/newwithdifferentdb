@@ -36,16 +36,29 @@ export async function action({ request }: ActionFunctionArgs) {
       }
 
       case 'getDiceRollingState': { // new
-        const diceRollingState = await getDiceRollingState(roomCode);
-        return json({ success: !!diceRollingState, diceRollingState });
+        try {
+          const diceRollingState = await getDiceRollingState(roomCode);
+          return json({ success: !!diceRollingState, diceRollingState });
+        } catch (error) {
+          console.error('[DICE API] Error fetching dice rolling state:', error);
+          return json({ 
+            success: false, 
+            error: 'Failed to fetch dice state due to server error',
+            diceRollingState: null 
+          }, { status: 500 });
+        }
       }
 
       case 'rollDice': {
-        const slotType = formData.get('slotType')?.toString() || 'Human';
         const slotIndex = parseInt(formData.get('slotIndex')?.toString() || '0');
         const diceResult = parseInt(formData.get('diceResult')?.toString() || '1');
         const diceType = formData.get('diceType')?.toString() || 'd20';
         const rollReason = formData.get('rollReason')?.toString() || 'tiebreaker';
+        const userIdForSlot = formData.get('userIdForSlot')?.toString();
+
+        if (!userIdForSlot) {
+          return json({ success: false, error: 'Missing userId for slot.' }, { status: 400 });
+        }
 
         if (!diceResult || diceResult < 1 || diceResult > 20) {
           return json({ success: false, error: 'Invalid dice result.' }, { status: 400 });
@@ -53,8 +66,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
         const success = await recordDiceRoll(
           roomCode,
-          user.id,
-          slotType,
+          userIdForSlot,
+          'Human', // slotType is not used meaningfully in recordDiceRoll
           slotIndex,
           diceResult,
           diceType,
@@ -70,7 +83,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
         return json({
           success: true,
-          message: `Rolled ${diceResult} for ${slotType} slot ${slotIndex}`,
+          message: `Rolled ${diceResult} for slot ${slotIndex}`,
           diceResult,
           state
         });

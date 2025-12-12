@@ -859,4 +859,3 @@ const DICE = (function() {
 
     return that;
 }());
-

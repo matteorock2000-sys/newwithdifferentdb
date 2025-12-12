@@ -17,4 +17,27 @@ export default defineConfig({
     }),
     tsconfigPaths(),
   ],
+  build: {
+    target: 'es2020',
+    minify: 'terser',
+    cssCodeSplit: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          supabase: ['@supabase/supabase-js'],
+          utils: ['ioredis', 'uuid', 'bcryptjs', 'isbot']
+        }
+      }
+    },
+    terserOptions: {
+      compress: {
+        drop_console: process.env.NODE_ENV === 'production',
+        drop_debugger: true
+      }
+    }
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom', '@supabase/supabase-js']
+  }
 });

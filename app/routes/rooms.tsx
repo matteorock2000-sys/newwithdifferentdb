@@ -1,15 +1,13 @@
-import { json, LoaderFunction, ActionFunction, redirect } from "@remix-run/node";
+import { json, LoaderFunction, ActionFunction } from "@remix-run/node";
 import { useLoaderData, useFetcher, Form, Link, useNavigate } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import { requireUser } from "~/services/auth.server";
-import { getCharactersForUser, getAndClearTemporaryPartySetup } from "~/services/db.server";
+import { getCharactersForUser, getAndClearTemporaryPartySetup, db } from "~/services/db.server";
 import { getSession, commitSession } from "~/sessions";
 import type { Character, User, PlayerSlot } from "~/types";
 import PlayerSetupSlot from "~/components/PlayerSetupSlot";
 import { handleRoomAction, getAllActiveRooms } from "~/services/room.server";
-import type { Room } from "~/types";
 import { useGlobalToast } from "~/utils/toast";
-import { db } from "~/services/db.server"; // Import db for fetching usernames
 
 interface LoaderData {
   user: User;
@@ -85,10 +83,7 @@ export const loader: LoaderFunction = async ({ request }) => {
     }
   } else {
     // Only log this once per user session, not on every poll
-    if (!session.get("hasSeenDefaultSlots")) {
-        console.log("[ROOMS LOADER] No temporary party setup found in DB. Using default slots.");
-        session.set("hasSeenDefaultSlots", true);
-    }
+    console.log("[ROOMS LOADER] No temporary party setup found in DB. Using default slots.");
   }
 
   // --- END: Database-based Party Setup Retrieval ---
@@ -156,14 +151,14 @@ export const action: ActionFunction = async ({ request }) => {
 export default function RoomsRoute() {
   const loaderData = useLoaderData<LoaderData>();
   const fetcher = useFetcher<LoaderData>();
-  const { error: showToastError } = useGlobalToast();
-  const { user, characters, initialPartySlots } = loaderData;
+  const { showToast } = useGlobalToast();
+const { user, characters, initialPartySlots }  = loaderData;
 
   useEffect(() => {
     if (loaderData.error) {
-      showToastError(loaderData.error);
+      showToast(loaderData.error, "error");
     }
-  }, [loaderData.error, showToastError]);
+  }, [loaderData.error, showToast]);
   // Use state for dynamic data (polling targets)
   const [activeRooms, setActiveRooms] = useState(loaderData.activeRooms);
   const [hostUsernames, setHostUsernames] = useState(loaderData.hostUsernames);
@@ -172,7 +167,6 @@ export default function RoomsRoute() {
   const [roomName, setRoomName] = useState(`${user?.username || 'Guest'}'s Adventure`);
   const [partySlots, setPartySlots] = useState<PlayerSlot[]>(initialPartySlots);
   const [joinCode, setJoinCode] = useState('');
-  const [isCreatingRoom, setIsCreatingRoom] = useState(false);
   const navigate = useNavigate();
 
   // Polling effect: Refetch loader data every 5 seconds
@@ -255,23 +249,7 @@ export default function RoomsRoute() {
     navigate('/');
   };
 
-  const handleCreateRoom = async (roomName: string, partySlots: PlayerSlot[]) => {
-    setIsCreatingRoom(true);
-    try {
-      // Existing room creation logic
-      const formData = new FormData();
-      formData.append('intent', 'create');
-      formData.append('roomName', roomName);
-      formData.append('roomSlots', JSON.stringify(partySlots));
-      
-      fetcher.submit(formData, { method: 'post', action: '/rooms' });
-    } catch (error) {
-      console.error('Error creating room:', error);
-      setIsCreatingRoom(false);
-    }
-  };
-
-  const handleDeleteCharacter = (characterId: string) => {
+  const handleDeleteCharacter = () => {
     // Deleting characters should also be managed on the dashboard.
     alert("Character deletion is managed on the Dashboard.");
   };
@@ -300,7 +278,9 @@ export default function RoomsRoute() {
         alert("Please ensure at least one Human character is selected and ready, and all active slots (Human/AI) are marked as Ready.");
         return;
     }
-    // The form submission handles the rest via the action function
+    
+    // Show immediate feedback to user
+    showToast("Creating room...", "info");
   };
 
   return (

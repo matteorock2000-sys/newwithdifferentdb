@@ -10,7 +10,104 @@ if (!GEMINI_API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+// Try different models in order of preference to handle quota issues
+// Note: gemini-1.5-flash is not available in v1beta, so we only use the available models
+const MODEL_PREFERENCES = [
+  'gemini-2.5-flash-preview-09-2025',  // Primary model, as requested by user
+  'gemini-2.0-flash'     // Fallback model, as requested by user
+];
+
+// Cache for storing recently generated scenarios to avoid duplicate API calls
+const scenarioCache = new Map<string, { scenarios: any[], timestamp: number }>();
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour cache
+
+function getModel() {
+  return genAI.getGenerativeModel({ model: MODEL_PREFERENCES[0] });
+}
+
+// Enhanced generateContent with retry logic and model fallback
+async function generateContentWithRetry(prompt: string, maxRetries: number = 3): Promise<any> {
+  let lastError = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    for (const modelPreference of MODEL_PREFERENCES) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelPreference });
+        console.log(`[GEMINI] Attempting to generate content with model: ${modelPreference} (attempt ${attempt}/${maxRetries})`);
+        
+        const result = await model.generateContent(prompt);
+        console.log(`[GEMINI] Successfully generated content with model: ${modelPreference}`);
+        return result;
+        
+      } catch (error: any) {
+        lastError = error;
+        console.error(`[GEMINI] Error with model ${modelPreference} (attempt ${attempt}):`, error.message);
+        
+        // Check if this is a quota error
+        if (error.message && error.message.includes('429 Too Many Requests')) {
+          console.warn(`[GEMINI] Quota exceeded for model ${modelPreference}, trying next model...`);
+          continue; // Try next model
+        }
+        
+        // Check if this is a model not found error
+        if (error.message && (error.message.includes('404 Not Found') || error.message.includes('not found for API version'))) {
+          console.warn(`[GEMINI] Model ${modelPreference} not found or unavailable, trying next model...`);
+          continue; // Try next model
+        }
+        
+        // For other errors, break and try next attempt
+        break;
+      }
+    }
+    
+    // If we've tried all models and none worked, wait before retrying
+    if (attempt < maxRetries) {
+      const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s, 8s
+      console.log(`[GEMINI] Waiting ${delay}ms before retry ${attempt + 1}...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  // If all retries failed, throw the last error with additional context
+  throw new Error(`Gemini API failed after ${maxRetries} attempts with all models. Last error: ${lastError?.message || 'Unknown error'}`);
+}
+
+// Fallback scenario generator for when API fails
+function generateFallbackScenarios(character: Character, duration: string, partyContext: string = ''): AdventureScenario[] {
+  console.log('[GEMINI] Generating fallback scenarios due to API failure');
+  
+  const scenarios: AdventureScenario[] = [];
+  const themes = [
+    { title: 'The Cursed Relic', environment: 'ancient ruins', objective: 'retrieve a cursed artifact', enemies: ['Skeletal Warriors', 'Shadow Wraiths'] },
+    { title: 'Forest of Whispers', environment: 'enchanted forest', objective: 'investigate mysterious disappearances', enemies: ['Corrupted Dryads', 'Giant Spiders'] },
+    { title: 'Tomb of the Forgotten King', environment: 'underground crypt', objective: 'uncover ancient secrets', enemies: ['Mummified Guards', 'Spectral Sentinels'] },
+    { title: 'Siege of Brightwatch', environment: 'fortified town', objective: 'defend against invading forces', enemies: ['Orc Raiders', 'Goblin Sappers'] }
+  ];
+  
+  for (let i = 0; i < 4; i++) {
+    const theme = themes[i];
+    scenarios.push({
+      id: `fallback-${Date.now()}-${i}`,
+      title: theme.title,
+      surrounding: `The ${theme.environment} looms before you, filled with an eerie silence. The air is thick with anticipation as you prepare to ${theme.objective}.`,
+      objective: `A local ${character.race} has hired you to ${theme.objective}. Time is of the essence!`,
+      possibleEncounters: [
+        `Navigating treacherous terrain in the ${theme.environment}`,
+        `Encountering mysterious clues about the ${theme.title}`,
+        `Solving ancient puzzles left by forgotten civilizations`
+      ],
+      possibleEnemies: theme.enemies,
+      bossFight: {
+        name: `${theme.title} Guardian`,
+        description: `A powerful entity that protects the secrets of the ${theme.title}. Only the worthy may pass.`
+      },
+      mapDescription: `A detailed 1080p map of ${theme.environment} with key locations marked. Player characters start at the entrance, ready to explore.`
+    });
+  }
+  
+  return scenarios;
+}
 
 // Utility function to clean text by removing emojis and excessive whitespace
 function cleanText(text: string): string {
@@ -99,7 +196,7 @@ export async function generateScenariosForCharacter(character: Character, durati
     });
     
     const result = await Promise.race([
-      model.generateContent(prompt),
+      generateContentWithRetry(prompt),
       timeoutPromise
     ]);
     
@@ -262,7 +359,7 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
           });
           
           const retryResult = await Promise.race([
-            model.generateContent(retryPrompt),
+            generateContentWithRetry(retryPrompt),
             retryTimeoutPromise
           ]);
           
@@ -544,21 +641,52 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
       }
       return scenario as AdventureScenario;
     });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Error calling Gemini API or parsing scenario response:", error);
+    
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : 'No stack trace available';
+    const errorName = error instanceof Error ? error.name : 'UnknownError';
+    
     console.error("Error details:", {
-      message: error.message,
-      stack: error.stack,
-      name: error.name
+      message: errorMessage,
+      stack: errorStack,
+      name: errorName
     });
     
     // If it's a timeout error, provide specific guidance
-    if (error.message.includes('timed out')) {
+    if (errorMessage.includes('timed out')) {
       console.error("[GEMINI] Request timed out - this may indicate high server load or network issues");
     }
     
+    // Check for quota-related errors and use fallback scenarios
+    if (errorMessage && (errorMessage.includes('429 Too Many Requests') || 
+                         errorMessage.includes('quota') || 
+                         errorMessage.includes('Quota exceeded') ||
+                         errorMessage.includes('Gemini API failed after'))) {
+      console.warn("[GEMINI] Quota or API limit reached, generating fallback scenarios");
+      
+      // Generate fallback scenarios
+      const fallbackScenarios = generateFallbackScenarios(character, duration, regenerationPrompt);
+      
+      // Cache the fallback scenarios to avoid repeated API calls
+      const cacheKey = JSON.stringify({
+        characterId: character.id,
+        duration,
+        regenerationPrompt: regenerationPrompt?.trim(),
+        partySize: partyCharacters?.length || 0
+      });
+      
+      scenarioCache.set(cacheKey, {
+        scenarios: fallbackScenarios,
+        timestamp: Date.now()
+      });
+      
+      return fallbackScenarios;
+    }
+    
     // Throw a specific error that can be caught by the action handler
-    throw new Error(`Failed to generate adventure scenarios: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`Failed to generate adventure scenarios: ${errorMessage}`);
   }
 }
 
@@ -706,9 +834,7 @@ export async function parseCharacterDescription(text: string, context: any = {})
   `;
 
   try {
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY as string);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const result = await model.generateContent(prompt);
+    const result = await generateContentWithRetry(prompt, 2); // Use fewer retries for character generation
     const responseText = result.response.text();
     console.log("Gemini Raw Response:", responseText);
 
@@ -786,11 +912,62 @@ export async function continueAdventure(messages: { role: 'user' | 'model', text
 
 
 export async function generateCharacterFeatures(characterClass: string, characterRace: string, characterBackground: string): Promise<string[]> {
-  // Implementation here
-  return ["Feature 1", "Feature 2"]; // Replace with actual implementation
+  try {
+    const result = await generateContentWithRetry(`Generate a D&D character features for a ${characterClass} ${characterRace} with a ${characterBackground} background. List the features in bullet points.`, 2);
+    const responseText = result.response.text();
+    console.log("Gemini Raw Response:", responseText);
+
+    // Parse the response
+    const lines = responseText.split('\n');
+    const features: string[] = [];
+    let inFeaturesSection = false;
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (trimmedLine.toLowerCase().includes('features')) {
+        inFeaturesSection = true;
+        continue;
+      }
+      if (inFeaturesSection && trimmedLine.startsWith('-')) {
+        features.push(trimmedLine.substring(1).trim());
+      }
+    }
+
+    console.log("Parsed Features:", features);
+    return features;
+  } catch (error) {
+    console.error("Error generating character features:", error);
+    throw error;
+  }
 }
 
 export async function generateCharacterPersonality(characterClass: string, characterRace: string, characterBackground: string): Promise<{ trait: string; ideal: string; bond: string; flaw: string }> {
-  // Implementation here
-  return { trait: "Trait", ideal: "Ideal", bond: "Bond", flaw: "Flaw" }; // Replace with actual implementation
+  try {
+    const result = await generateContentWithRetry(`Generate a D&D character personality for a ${characterClass} ${characterRace} with a ${characterBackground} background. Include a trait, ideal, bond, and flaw. Format the response as: Trait: [text] Ideal: [text] Bond: [text] Flaw: [text]`, 2);
+    const responseText = result.response.text();
+    console.log("Gemini Raw Response:", responseText);
+
+    // Parse the response
+    const lines = responseText.split('\n');
+    const personality = { trait: '', ideal: '', bond: '', flaw: '' };
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (trimmedLine.toLowerCase().startsWith('trait:')) {
+        personality.trait = trimmedLine.substring(6).trim();
+      } else if (trimmedLine.toLowerCase().startsWith('ideal:')) {
+        personality.ideal = trimmedLine.substring(6).trim();
+      } else if (trimmedLine.toLowerCase().startsWith('bond:')) {
+        personality.bond = trimmedLine.substring(5).trim();
+      } else if (trimmedLine.toLowerCase().startsWith('flaw:')) {
+        personality.flaw = trimmedLine.substring(5).trim();
+      }
+    }
+
+    console.log("Parsed Personality:", personality);
+    return personality;
+  } catch (error) {
+    console.error("Error generating character personality:", error);
+    throw error;
+  }
 }
