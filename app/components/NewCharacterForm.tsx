@@ -576,8 +576,8 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
       if (fetcher.data) { // Data is available, meaning the fetch is complete
         if (fetcher.data.success) {
           logger.debug('Server-side generation completed successfully');
-          if (fetcher.data.portraitBase64) { 
-            const imageUrl = fetcher.data.portraitBase64; 
+          if (fetcher.data.portraitUrl) { 
+            const imageUrl = fetcher.data.portraitUrl; 
             setCharacter(prev => ({ ...prev!, avatarUrl: imageUrl }));
             setPortraitRetryCount(0); // Reset retry count on success
           } else {
