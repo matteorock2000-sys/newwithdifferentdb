@@ -893,7 +893,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
                 {!isLoadingPortrait && character.avatarUrl && (
                   <div className="flex flex-col items-center gap-4">
                     <img 
-                      src={character.avatarUrl.startsWith('http') ? character.avatarUrl : `data:image/jpeg;base64,${character.avatarUrl}`} 
+                      src={character.avatarUrl} 
                       alt="Character Portrait" 
                       className="w-48 h-48 object-cover rounded-md border-2 border-red-500" 
                     />
@@ -953,7 +953,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
                 <div className="mb-6 text-center bg-gray-800 p-4 rounded-md border border-gray-700">
                   <h3 className="text-lg font-semibold text-red-400 mb-3">Character Portrait</h3>
                   <img 
-                    src={character.avatarUrl.startsWith('http') ? character.avatarUrl : `data:image/jpeg;base64,${character.avatarUrl}`} 
+                    src={character.avatarUrl} 
                     alt="Character Portrait" 
                     className="w-48 h-48 object-cover rounded-md border-2 border-red-500 mx-auto shadow-lg" 
                   />
