@@ -5,14 +5,6 @@ import { generateCharacterPortrait } from "~/services/gemini.server";
 import { getCharacterById, saveCharacter } from "~/services/db.server";
 import type { Character } from "~/types";
 import { logger } from "~/utils/logger";
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-
-const publicDirPath = path.join(process.cwd(), 'public');
-const tempPortraitsDir = path.join(publicDirPath, 'temp_portraits');
-
-// Ensure the temporary directory exists
-fs.mkdirSync(tempPortraitsDir, { recursive: true });
 
 export async function action({ request }: ActionFunctionArgs) {
   logger.debug("[PORTRAIT API] Route action called");
@@ -53,18 +45,9 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     logger.debug("[PORTRAIT API] Generating portrait server-side...");
-    const finalPortraitBase64 = await generateCharacterPortrait(character);
-    logger.debug("[PORTRAIT API] Portrait generated successfully");
-
-    // Save the base64 image to a temporary file
-    const uniqueFilename = `${character.id || crypto.randomUUID()}.jpeg`;
-    const filePath = path.join(tempPortraitsDir, uniqueFilename);
-    const base64Data = finalPortraitBase64.replace(/^data:image\/\w+;base64,/, "");
-    const imageBuffer = Buffer.from(base64Data, 'base64');
-    fs.writeFileSync(filePath, imageBuffer);
-
-    const publicUrl = `/temp_portraits/${uniqueFilename}`;
-    logger.debug("[PORTRAIT API] Image saved to temporary file", { filePath, publicUrl });
+    // generateCharacterPortrait now returns a direct image URL
+    const imageUrl = await generateCharacterPortrait(character);
+    logger.debug("[PORTRAIT API] Portrait generated successfully, URL:", { imageUrl });
 
     // If a characterId is provided, save the portrait to the existing character
     if (characterId) {
@@ -75,14 +58,14 @@ export async function action({ request }: ActionFunctionArgs) {
       
       const updatedCharacter: Character = {
         ...existingCharacter,
-        avatarUrl: publicUrl, // Save the URL, not the base64 string
+        avatarUrl: imageUrl, // Save the URL, not the base64 string
       };
       await saveCharacter(userId, updatedCharacter);
       logger.debug("[PORTRAIT API] Portrait URL saved to character");
     }
 
-    logger.debug("[PORTRAIT API] Returning portrait URL", { portraitUrl: publicUrl, characterId });
-    return json({ success: true, portraitUrl: publicUrl, characterId }, { status: 200 });
+    logger.debug("[PORTRAIT API] Returning portrait URL", { portraitUrl: imageUrl, characterId });
+    return json({ success: true, portraitUrl: imageUrl, characterId }, { status: 200 });
 
   } catch (error) {
     logger.error("[PORTRAIT GENERATION API] Error generating character portrait", { error: error instanceof Error ? error.message : "Unknown error" });

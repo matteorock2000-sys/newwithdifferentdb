@@ -133,15 +133,15 @@ export async function downloadImageAsBase64(imageUrl: string) {
   }
 }
 
-export async function generateImage(prompt: string, aspectRatio?: string) {
+export async function generateImage(prompt: string, aspectRatio?: string): Promise<string> {
   logger.log(logger.LogLevel.DEBUG,
     `Orchestrating image generation for prompt: "${prompt}" (aspectRatio: ${aspectRatio})`
   );
   try {
     const taskId = await createImageGenerationTask(prompt, aspectRatio);
     const imageUrl = await pollTaskStatus(taskId);
-    const base64 = await downloadImageAsBase64(imageUrl);
-    return base64;
+    // Directly return the image URL instead of downloading and converting to base64
+    return imageUrl;
   } catch (err: any) {
     logger.log(logger.LogLevel.ERROR,`Error in generateImage orchestration: ${err.message}`);
     throw err; // Re-throw to be handled by calling function

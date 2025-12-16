@@ -1,20 +1,21 @@
 import { createClient } from "@supabase/supabase-js";
 import Redis from "ioredis";
 import type { Character, User as UserType, PlayerSlot } from "~/types";
+import { logger } from "~/utils/logger";
 
 // Define the User type structure
 export interface User extends UserType {}
 
 // Environment variables are assumed to be set in .env
 const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const redisUrl = process.env.REDIS_URL;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY must be set.");
+if (!supabaseUrl || !supabaseServiceKey) {
+  throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set for server-side operations.");
 }
 
-export const db = createClient(supabaseUrl, supabaseAnonKey);
+export const db = createClient(supabaseUrl, supabaseServiceKey);
 
 // Redis is optional - only initialize if REDIS_URL is provided
 export const redis = redisUrl ? new Redis(redisUrl) : null;
@@ -22,11 +23,11 @@ export const redis = redisUrl ? new Redis(redisUrl) : null;
 if (redisUrl) {
   // Log successful Redis connection setup
   redis?.on("connect", () => {
-    console.log("[DB SERVICE] Redis connected successfully.");
+    logger.debug("[DB SERVICE] Redis connected successfully.");
   });
   
   redis?.on("error", (err: Error) => {
-    console.warn("[DB SERVICE] Redis connection error:", err.message);
+    logger.warn("[DB SERVICE] Redis connection error", { error: err.message });
   });
 }
 
@@ -154,7 +155,7 @@ export async function createUser(email: string, hashedPassword: string, username
     .single();
 
   if (error) {
-    console.error("Error creating user:", error);
+    logger.error("Error creating user", { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error("Failed to create user.");
   }
   return mapDbUserToUser(data)!;
@@ -168,7 +169,7 @@ export async function getUserByEmail(email: string): Promise<User | null> {
     .single();
 
   if (error && error.code !== 'PGRST116') {
-    console.error("Error fetching user by email:", error);
+    logger.error("Error fetching user by email", { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error("Failed to fetch user.");
   }
   return mapDbUserToUser(data);
@@ -182,7 +183,7 @@ export async function getUserByUsername(username: string): Promise<User | null> 
     .single();
 
   if (error && error.code !== 'PGRST116') {
-    console.error("Error fetching user by username:", error);
+    logger.error("Error fetching user by username", { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error("Failed to fetch user.");
   }
   return mapDbUserToUser(data);
@@ -196,7 +197,7 @@ export async function getUserById(id: string): Promise<User | null> {
     .single();
 
   if (error && error.code !== 'PGRST116') {
-    console.error("Error fetching user by ID:", error);
+    logger.error("Error fetching user by ID", { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error("Failed to fetch user.");
   }
   return mapDbUserToUser(data);
@@ -214,7 +215,7 @@ export async function findNextAvailableSlot(userId: string): Promise<number | nu
     .eq('userId', userId);
 
   if (error) {
-    console.error("Error fetching character slots:", error);
+    logger.error("Error fetching character slots", { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error("Failed to check for available slots.");
   }
 
@@ -235,7 +236,7 @@ export async function getCharactersForUser(userId: string): Promise<(Character |
     .eq('userId', userId); // CORRECTED: Query using userId
 
   if (error) {
-    console.error("Error fetching characters:", error);
+    logger.error("Error fetching characters", { error: error instanceof Error ? error.message : "Unknown error" });
     return [];
   }
   return data.map(mapDbCharacterToCharacter);
@@ -254,10 +255,29 @@ export async function getCharacterById(userId: string, characterId: string): Pro
   }
 
   if (error) {
-    console.error("Error fetching character by ID:", error);
+    logger.error("Error fetching character by ID", { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error("Failed to fetch character.");
   }
   return mapDbCharacterToCharacter(data);
+}
+
+export async function getCharacterAvatarUrl(userId: string, characterId: string): Promise<string | null> {
+  const { data, error } = await db
+    .from('characters')
+    .select('avatar_url')
+    .eq('id', characterId)
+    .eq('userId', userId) // Ensure ownership
+    .single();
+
+  if (error && error.code === 'PGRST116') {
+    return null;
+  }
+
+  if (error) {
+    logger.error("Error fetching character avatar URL by ID", { error: error instanceof Error ? error.message : "Unknown error" });
+    throw new Error("Failed to fetch character avatar URL.");
+  }
+  return data?.avatar_url || null;
 }
 
 export async function getCharactersByIds(characterIds: string[]): Promise<Character[]> {
@@ -269,7 +289,7 @@ export async function getCharactersByIds(characterIds: string[]): Promise<Charac
     .in('id', characterIds);
 
   if (error) {
-    console.error("Error fetching characters by IDs:", error);
+    logger.error("Error fetching characters by IDs", { error: error instanceof Error ? error.message : "Unknown error" });
     return [];
   }
   return data.map(mapDbCharacterToCharacter);
@@ -285,7 +305,7 @@ export async function saveCharacter(userId: string, character: Character): Promi
     .single();
 
   if (error) {
-    console.error("Error saving/updating character:", error);
+    logger.error("Error saving/updating character", { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error(`Failed to save character: ${error.message}`);
   }
   return mapDbCharacterToCharacter(data);
@@ -299,7 +319,7 @@ export async function deleteCharacter(userId: string, characterId: string): Prom
     .eq('userId', userId); // CORRECTED: Query using userId
 
   if (error) {
-    console.error("Error deleting character:", error);
+    logger.error("Error deleting character", { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error("Failed to delete character.");
   }
 }
@@ -327,7 +347,7 @@ export async function saveDefaultCharactersForUser(userId: string, characters: O
         .select();
 
     if (error) {
-        console.error("Error saving default characters:", error);
+        logger.error("Error saving default characters", { error: error instanceof Error ? error.message : "Unknown error" });
         throw new Error("Failed to save default characters.");
     }
     return data.map(mapDbCharacterToCharacter);
@@ -341,7 +361,7 @@ export async function saveDefaultCharactersForUser(userId: string, characters: O
  */
 export async function saveTemporaryPartySetup(userId: string, partySlots: PlayerSlot[]): Promise<void> {
   const dataToUpsert = [{ user_id: userId, party_slots: partySlots }];
-  console.log("[DB SERVICE] Attempting to save temporary party setup for user:", userId, "Data:", JSON.stringify(dataToUpsert));
+  logger.debug("[DB SERVICE] Attempting to save temporary party setup for user:", { userId, data: JSON.stringify(dataToUpsert) });
   
   const { error } = await db
     .from('temporary_party_setups')
@@ -349,10 +369,10 @@ export async function saveTemporaryPartySetup(userId: string, partySlots: Player
     .upsert(dataToUpsert, { onConflict: 'user_id' });
 
   if (error) {
-    console.error("[DB SERVICE] Error saving temporary party setup:", error);
+    logger.error("[DB SERVICE] Error saving temporary party setup", { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error("Failed to save temporary party setup.");
   }
-  console.log("[DB SERVICE] Temporary party setup saved successfully.");
+  logger.debug("[DB SERVICE] Temporary party setup saved successfully.");
 }
 
 /**
@@ -368,16 +388,16 @@ export async function getAndClearTemporaryPartySetup(userId: string): Promise<Pl
     .single();
 
   if (fetchError && fetchError.code !== 'PGRST116') {
-    console.error("[DB SERVICE] Error fetching temporary party setup:", fetchError);
+    logger.error("[DB SERVICE] Error fetching temporary party setup", { error: fetchError instanceof Error ? fetchError.message : "Unknown error" });
     throw new Error("Failed to fetch temporary party setup.");
   }
 
   if (!data) {
-    console.log("[DB SERVICE] No temporary party setup found for user:", userId);
+    logger.debug("[DB SERVICE] No temporary party setup found for user:", { userId });
     return null;
   }
   
-  console.log("[DB SERVICE] Successfully retrieved temporary party setup. Proceeding to clear.");
+  logger.debug("[DB SERVICE] Successfully retrieved temporary party setup. Proceeding to clear.");
 
   // 2. Delete the temporary entry
   const { error: deleteError } = await db
@@ -387,10 +407,10 @@ export async function getAndClearTemporaryPartySetup(userId: string): Promise<Pl
     .eq('user_id', userId);
 
   if (deleteError) {
-    console.warn("[DB SERVICE] Warning: Failed to clear temporary party setup for user:", userId, deleteError);
+    logger.warn("[DB SERVICE] Warning: Failed to clear temporary party setup for user:", { userId, error: deleteError instanceof Error ? deleteError.message : "Unknown error" });
     // We proceed even if deletion fails, as retrieval succeeded.
   } else {
-    console.log("[DB SERVICE] Temporary party setup cleared successfully.");
+    logger.debug("[DB SERVICE] Temporary party setup cleared successfully.");
   }
 
   // 3. Return the retrieved slots

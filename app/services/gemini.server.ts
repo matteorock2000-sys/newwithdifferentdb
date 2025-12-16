@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { json } from '@remix-run/node';
 import type { Character, AdventureScenario, BossFight, PlayerSlot } from '~/types'; // Import BossFight type
 import { generateImage as generateImageWithFreepik } from '~/services/freepik.server'; // Import Freepik service
+import { logger } from '~/utils/logger';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -34,25 +35,25 @@ async function generateContentWithRetry(prompt: string, maxRetries: number = 3):
     for (const modelPreference of MODEL_PREFERENCES) {
       try {
         const model = genAI.getGenerativeModel({ model: modelPreference });
-        console.log(`[GEMINI] Attempting to generate content with model: ${modelPreference} (attempt ${attempt}/${maxRetries})`);
+        logger.debug(`[GEMINI] Attempting to generate content with model: ${modelPreference} (attempt ${attempt}/${maxRetries})`);
         
         const result = await model.generateContent(prompt);
-        console.log(`[GEMINI] Successfully generated content with model: ${modelPreference}`);
+        logger.debug(`[GEMINI] Successfully generated content with model: ${modelPreference}`);
         return result;
         
       } catch (error: any) {
         lastError = error;
-        console.error(`[GEMINI] Error with model ${modelPreference} (attempt ${attempt}):`, error.message);
+        logger.error(`[GEMINI] Error with model ${modelPreference} (attempt ${attempt})`, { error: error.message });
         
         // Check if this is a quota error
         if (error.message && error.message.includes('429 Too Many Requests')) {
-          console.warn(`[GEMINI] Quota exceeded for model ${modelPreference}, trying next model...`);
+          logger.warn(`[GEMINI] Quota exceeded for model ${modelPreference}, trying next model...`);
           continue; // Try next model
         }
         
         // Check if this is a model not found error
         if (error.message && (error.message.includes('404 Not Found') || error.message.includes('not found for API version'))) {
-          console.warn(`[GEMINI] Model ${modelPreference} not found or unavailable, trying next model...`);
+          logger.warn(`[GEMINI] Model ${modelPreference} not found or unavailable, trying next model...`);
           continue; // Try next model
         }
         
@@ -64,7 +65,7 @@ async function generateContentWithRetry(prompt: string, maxRetries: number = 3):
     // If we've tried all models and none worked, wait before retrying
     if (attempt < maxRetries) {
       const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s, 8s
-      console.log(`[GEMINI] Waiting ${delay}ms before retry ${attempt + 1}...`);
+      logger.debug(`[GEMINI] Waiting ${delay}ms before retry ${attempt + 1}...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -75,7 +76,7 @@ async function generateContentWithRetry(prompt: string, maxRetries: number = 3):
 
 // Fallback scenario generator for when API fails
 function generateFallbackScenarios(character: Character, duration: string, partyContext: string = ''): AdventureScenario[] {
-  console.log('[GEMINI] Generating fallback scenarios due to API failure');
+  logger.debug('[GEMINI] Generating fallback scenarios due to API failure');
   
   const scenarios: AdventureScenario[] = [];
   const themes = [
@@ -201,7 +202,7 @@ export async function generateScenariosForCharacter(character: Character, durati
     ]);
     
     const responseText = result.response.text();
-    console.log("Gemini Scenario Response:", responseText);
+    logger.debug("Gemini Scenario Response:", { responseText });
 
     // Try multiple patterns to extract JSON
     let jsonString = responseText;
@@ -221,9 +222,9 @@ export async function generateScenariosForCharacter(character: Character, durati
       }
     }
 
-    console.log(`[GEMINI] Using extraction method: ${extractionMethod}`);
-    console.log(`[GEMINI] Extracted JSON length: ${jsonString.length}`);
-    console.log(`[GEMINI] First 200 chars of extracted JSON:`, jsonString.substring(0, 200));
+    logger.debug(`[GEMINI] Using extraction method: ${extractionMethod}`);
+    logger.debug(`[GEMINI] Extracted JSON length: ${jsonString.length}`);
+    logger.debug(`[GEMINI] First 200 chars of extracted JSON:`, { chars: jsonString.substring(0, 200) });
     
     // Clean up common JSON issues
     jsonString = jsonString.trim();
@@ -266,24 +267,24 @@ export async function generateScenariosForCharacter(character: Character, durati
       }
     }
     
-    console.log(`[GEMINI] Cleaned JSON length: ${jsonString.length}`);
+    logger.debug(`[GEMINI] Cleaned JSON length: ${jsonString.length}`);
     
     let parsedResponse;
     try {
-      console.log(`[GEMINI] Attempting initial JSON parse:`);
-      console.log(`[GEMINI] First 200 chars:`, jsonString.substring(0, 200));
-      console.log(`[GEMINI] Last 200 chars:`, jsonString.substring(Math.max(0, jsonString.length - 200)));
+      logger.debug(`[GEMINI] Attempting initial JSON parse:`);
+      logger.debug(`[GEMINI] First 200 chars:`, { chars: jsonString.substring(0, 200) });
+      logger.debug(`[GEMINI] Last 200 chars:`, { chars: jsonString.substring(Math.max(0, jsonString.length - 200)) });
       
       parsedResponse = JSON.parse(jsonString);
-      console.log(`[GEMINI] Successfully parsed initial JSON`);
+      logger.debug(`[GEMINI] Successfully parsed initial JSON`);
     } catch (jsonError) {
-      console.error(`[GEMINI] JSON parsing failed:`, jsonError.message);
-      console.error(`[GEMINI] JSON at position ${jsonError.position}:`, jsonString.substring(Math.max(0, jsonError.position - 50), jsonError.position + 50));
+      logger.error(`[GEMINI] JSON parsing failed`, { error: jsonError.message });
+      logger.error(`[GEMINI] JSON at position ${jsonError.position}:`, { chars: jsonString.substring(Math.max(0, jsonError.position - 50), jsonError.position + 50) });
       
       // Log more context around the error
       const contextStart = Math.max(0, jsonError.position - 100);
       const contextEnd = Math.min(jsonString.length, jsonError.position + 100);
-      console.error(`[GEMINI] Full context around error:`, jsonString.substring(contextStart, contextEnd));
+      logger.error(`[GEMINI] Full context around error:`, { chars: jsonString.substring(contextStart, contextEnd) });
       
       // Try multiple fallback strategies
       let cleanedJson = jsonString;
@@ -316,23 +317,23 @@ export async function generateScenariosForCharacter(character: Character, durati
       const arrayMatch = cleanedJson.match(/\[.*\]/s);
       if (arrayMatch) {
         cleanedJson = arrayMatch[0];
-        console.log(`[GEMINI] Extracted array match, length: ${cleanedJson.length}`);
+        logger.debug(`[GEMINI] Extracted array match, length: ${cleanedJson.length}`);
       } else {
-        console.log(`[GEMINI] No array match found in cleaned JSON`);
+        logger.debug(`[GEMINI] No array match found in cleaned JSON`);
       }
       
       try {
-        console.log(`[GEMINI] Attempting to parse cleaned JSON (length: ${cleanedJson.length}):`);
-        console.log(`[GEMINI] First 200 chars:`, cleanedJson.substring(0, 200));
-        console.log(`[GEMINI] Last 200 chars:`, cleanedJson.substring(cleanedJson.length - 200));
+        logger.debug(`[GEMINI] Attempting to parse cleaned JSON (length: ${cleanedJson.length}):`);
+        logger.debug(`[GEMINI] First 200 chars:`, { chars: cleanedJson.substring(0, 200) });
+        logger.debug(`[GEMINI] Last 200 chars:`, { chars: cleanedJson.substring(cleanedJson.length - 200) });
         
         parsedResponse = JSON.parse(cleanedJson);
-        console.log(`[GEMINI] Successfully parsed after comprehensive cleaning`);
+        logger.debug(`[GEMINI] Successfully parsed after comprehensive cleaning`);
       } catch (cleanError2) {
-        console.error(`[GEMINI] Comprehensive cleaning failed:`, cleanError2.message);
+        logger.error(`[GEMINI] Comprehensive cleaning failed`, { error: cleanError2.message });
         
         // Strategy 4: Retry with Gemini by sending the error and asking for correction
-        console.error(`[GEMINI] Attempting retry with Gemini feedback...`);
+        logger.error(`[GEMINI] Attempting retry with Gemini feedback...`);
         
         try {
           const retryPrompt = `
@@ -364,7 +365,7 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
           ]);
           
           const retryResponseText = retryResult.response.text();
-          console.log(`[GEMINI RETRY] Response from retry:`, retryResponseText);
+          logger.debug(`[GEMINI RETRY] Response from retry:`, { response: retryResponseText });
           
           // Extract JSON from retry response
           let retryJsonString = retryResponseText;
@@ -376,13 +377,13 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
           }
           
           parsedResponse = JSON.parse(retryJsonString);
-          console.log(`[GEMINI] Successfully parsed after retry with Gemini feedback`);
+          logger.debug(`[GEMINI] Successfully parsed after retry with Gemini feedback`);
           
         } catch (retryError) {
-          console.error(`[GEMINI] Retry with Gemini feedback failed:`, retryError.message);
+          logger.error(`[GEMINI] Retry with Gemini feedback failed`, { error: retryError.message });
           
           // Strategy 5: Create fallback scenarios manually
-          console.error(`[GEMINI] Creating fallback scenarios due to parsing failure`);
+          logger.error(`[GEMINI] Creating fallback scenarios due to parsing failure`);
           parsedResponse = [
           {
             id: crypto.randomUUID(),
@@ -437,13 +438,13 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
             mapDescription: "A dungeon map with rooms and treasure locations."
           }
         ];
-        console.log(`[GEMINI] Created 4 fallback scenarios`);
+        logger.debug(`[GEMINI] Created 4 fallback scenarios`);
         }
       }
       
       // Ensure parsedResponse is always defined
       if (!parsedResponse) {
-        console.error(`[GEMINI] parsedResponse is undefined, creating fallback scenarios`);
+        logger.error(`[GEMINI] parsedResponse is undefined, creating fallback scenarios`);
         parsedResponse = [
           {
             id: crypto.randomUUID(),
@@ -502,8 +503,8 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
     }
     
     if (!Array.isArray(parsedResponse)) {
-      console.error("Response is not an array:", parsedResponse);
-      console.error("Creating fallback scenarios due to invalid response format");
+      logger.error("Response is not an array:", { response: parsedResponse });
+      logger.error("Creating fallback scenarios due to invalid response format");
       
       // Create fallback scenarios
       parsedResponse = [
@@ -565,7 +566,7 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
     // Validate each scenario has required fields
     const validatedScenarios = parsedResponse.map((scenario: any, index) => {
       if (!scenario || typeof scenario !== 'object') {
-        console.warn(`[VALIDATION] Invalid scenario at index ${index}:`, scenario);
+        logger.warn(`[VALIDATION] Invalid scenario at index ${index}:`, { scenario });
         return {
           id: crypto.randomUUID(),
           title: `Fallback Scenario ${index + 1}`,
@@ -598,7 +599,7 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
     });
 
     if (validatedScenarios.length !== 4) {
-      console.warn(`AI returned ${validatedScenarios.length} scenarios instead of 4. Padding or trimming as needed.`);
+      logger.warn(`AI returned ${validatedScenarios.length} scenarios instead of 4. Padding or trimming as needed.`);
       // If less than 4, pad with fallback scenarios
       while (validatedScenarios.length < 4) {
         validatedScenarios.push({
@@ -642,13 +643,13 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
       return scenario as AdventureScenario;
     });
   } catch (error: unknown) {
-    console.error("Error calling Gemini API or parsing scenario response:", error);
+    logger.error("Error calling Gemini API or parsing scenario response", { error: error instanceof Error ? error.message : "Unknown error" });
     
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : 'No stack trace available';
     const errorName = error instanceof Error ? error.name : 'UnknownError';
     
-    console.error("Error details:", {
+    logger.error("Error details:", {
       message: errorMessage,
       stack: errorStack,
       name: errorName
@@ -656,7 +657,7 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
     
     // If it's a timeout error, provide specific guidance
     if (errorMessage.includes('timed out')) {
-      console.error("[GEMINI] Request timed out - this may indicate high server load or network issues");
+      logger.error("[GEMINI] Request timed out - this may indicate high server load or network issues");
     }
     
     // Check for quota-related errors and use fallback scenarios
@@ -664,7 +665,7 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
                          errorMessage.includes('quota') || 
                          errorMessage.includes('Quota exceeded') ||
                          errorMessage.includes('Gemini API failed after'))) {
-      console.warn("[GEMINI] Quota or API limit reached, generating fallback scenarios");
+      logger.warn("[GEMINI] Quota or API limit reached, generating fallback scenarios");
       
       // Generate fallback scenarios
       const fallbackScenarios = generateFallbackScenarios(character, duration, regenerationPrompt);
@@ -702,10 +703,10 @@ export async function generateMapImage(scenario: AdventureScenario): Promise<str
 
   try {
     const base64Image = await generateImageWithFreepik(positivePrompt, 'landscape_16_9');
-    console.log("Map image generation completed successfully.");
+    logger.debug("Map image generation completed successfully.");
     return base64Image;
   } catch (error) {
-    console.error("Error generating map image with Freepik:", error);
+    logger.error("Error generating map image with Freepik", { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error(`Failed to generate map image: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -723,12 +724,12 @@ export async function generateCharacterPawn(character: Character): Promise<strin
   `;
 
   try {
-    console.log("Generating character pawn for:", character.name);
+    logger.info("Generating character pawn", { characterName: character.name });
     const base64Image = await generateImageWithFreepik(positivePrompt, 'square_1_1'); // Assuming square for pawns as well
-    console.log("Character pawn generation completed successfully.");
+    logger.info("Character pawn generation completed successfully");
     return base64Image;
   } catch (error) {
-    console.error("Error generating character pawn with Freepik:", error);
+    logger.error("Error generating character pawn with Freepik", { error: error instanceof Error ? error.message : String(error) });
     throw new Error(`Failed to generate character pawn: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -754,12 +755,12 @@ Art Direction: Professional fantasy character portrait, neutral expression, deta
   `;
 
   try {
-    console.log("Generating character portrait for:", character.name);
-    const base64Image = await generateImageWithFreepik(positivePrompt, 'square_1_1');
-    console.log("Character portrait generation completed successfully.");
-    return base64Image;
+    logger.info("Generating character portrait", { characterName: character.name });
+    const imageUrl = await generateImageWithFreepik(positivePrompt, 'square_1_1');
+    logger.info("Character portrait generation completed successfully");
+    return imageUrl;
   } catch (error) {
-    console.error("Error generating character portrait with Freepik:", error);
+    logger.error("Error generating character portrait with Freepik", { error: error instanceof Error ? error.message : String(error) });
     throw new Error(`Failed to generate character portrait: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -836,7 +837,7 @@ export async function parseCharacterDescription(text: string, context: any = {})
   try {
     const result = await generateContentWithRetry(prompt, 2); // Use fewer retries for character generation
     const responseText = result.response.text();
-    console.log("Gemini Raw Response:", responseText);
+    logger.debug("Gemini Raw Response", { responseText });
 
     const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
     let jsonString = responseText;
@@ -847,7 +848,7 @@ export async function parseCharacterDescription(text: string, context: any = {})
     const parsedResponse = JSON.parse(jsonString);
     return parsedResponse;
   } catch (error) {
-    console.error("Error calling Gemini API or parsing response:", error);
+    logger.error("Error calling Gemini API or parsing response", { error: error instanceof Error ? error.message : String(error) });
     throw new Error('Failed to process character description with AI.');
   }
 }
@@ -915,7 +916,7 @@ export async function generateCharacterFeatures(characterClass: string, characte
   try {
     const result = await generateContentWithRetry(`Generate a D&D character features for a ${characterClass} ${characterRace} with a ${characterBackground} background. List the features in bullet points.`, 2);
     const responseText = result.response.text();
-    console.log("Gemini Raw Response:", responseText);
+    logger.debug("Gemini Raw Response", { responseText });
 
     // Parse the response
     const lines = responseText.split('\n');
@@ -933,10 +934,10 @@ export async function generateCharacterFeatures(characterClass: string, characte
       }
     }
 
-    console.log("Parsed Features:", features);
+    logger.debug("Parsed Features", { features });
     return features;
   } catch (error) {
-    console.error("Error generating character features:", error);
+    logger.error("Error generating character features", { error: error instanceof Error ? error.message : String(error) });
     throw error;
   }
 }
@@ -945,7 +946,7 @@ export async function generateCharacterPersonality(characterClass: string, chara
   try {
     const result = await generateContentWithRetry(`Generate a D&D character personality for a ${characterClass} ${characterRace} with a ${characterBackground} background. Include a trait, ideal, bond, and flaw. Format the response as: Trait: [text] Ideal: [text] Bond: [text] Flaw: [text]`, 2);
     const responseText = result.response.text();
-    console.log("Gemini Raw Response:", responseText);
+    logger.debug("Gemini Raw Response", { responseText });
 
     // Parse the response
     const lines = responseText.split('\n');
@@ -964,10 +965,10 @@ export async function generateCharacterPersonality(characterClass: string, chara
       }
     }
 
-    console.log("Parsed Personality:", personality);
+    logger.debug("Parsed Personality", { personality });
     return personality;
   } catch (error) {
-    console.error("Error generating character personality:", error);
+    logger.error("Error generating character personality", { error: error instanceof Error ? error.message : String(error) });
     throw error;
   }
 }

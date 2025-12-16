@@ -10,7 +10,9 @@ import PlayerSetupSlot from "~/components/PlayerSetupSlot";
 import NewCharacterForm from "~/components/NewCharacterForm";
 import { DND_5E_CHARACTERS } from "~/data/dnd";
 import { createRandomLevel3Character } from "~/data/randomizerData";
-// REMOVED: import { getSession, commitSession } from "~/sessions"; 
+// REMOVED: import { getSession, commitSession } from "~/sessions";
+import { logger } from "~/utils/logger";
+import { showToast } from "~/utils/toast"; 
 
 // REMOVED AI IMPORTS: generateCharacterFeatures, generateCharacterPersonality, parseCharacterText
 
@@ -55,7 +57,19 @@ export const loader: LoaderFunction = async ({ request }) => {
   const user = await requireUser(request);
   const characters = await getCharactersForUser(user.id);
   
-  const validCharacters = characters.filter((c): c is Character => c !== null);
+  const validCharacters = characters.filter((c): c is Character => c !== null).map(char => {
+    logger.debug(`[INDEX LOADER] Processing character: ${char.name}, original avatarUrl present: ${!!char.avatarUrl}`);
+    // If avatarUrl is a data URI (large base64) OR a raw base64 string, strip it to prevent 431 errors
+    if (char.avatarUrl && 
+        (char.avatarUrl.startsWith('data:image/') || 
+         (!char.avatarUrl.startsWith('http://') && !char.avatarUrl.startsWith('https://') && !char.avatarUrl.startsWith('/') && char.avatarUrl.length > 200))) {
+      logger.debug(`[INDEX LOADER] Stripping suspected base64 avatar for character: ${char.name}, ID: ${char.id}`);
+      return { ...char, avatarUrl: null, _hasBase64Avatar: true };
+    }
+    logger.debug(`[INDEX LOADER] Retaining avatarUrl for character: ${char.name}, ID: ${char.id}, avatarUrl: ${char.avatarUrl ? char.avatarUrl.substring(0, 50) + '...' : 'none'}`);
+
+    return char;
+  });
 
   return json<LoaderData>({ user, characters: validCharacters });
 };
@@ -99,10 +113,10 @@ export const action: ActionFunction = async ({ request }) => {
       try {
         const characterData = createRandomLevel3Character();
         // Return the generated data to the client to pre-fill the form
-        console.log(`[ACTION] Generated random Level 3 character: ${characterData.name} (${characterData.race} ${characterData.class})`);
+        logger.debug(`[ACTION] Generated random Level 3 character: ${characterData.name} (${characterData.race} ${characterData.class})`);
         return json({ success: true, data: { characterData } });
       } catch (randomError) {
-        console.error("Local Random Character Creation Failed:", randomError);
+        logger.error("Local Random Character Creation Failed", { error: randomError instanceof Error ? randomError.message : "Unknown error" });
         const errorMessage = randomError instanceof Error ? randomError.message : 'Failed to generate random character locally.';
         return json({ error: errorMessage }, { status: 500 });
       }
@@ -153,7 +167,7 @@ export const action: ActionFunction = async ({ request }) => {
 
           await saveCharacter(user.id, characterData);
           savedCharacters.push(characterData);
-          console.log(`Character "${characterData.name}" saved successfully to slot ${nextSlot}`);
+          logger.debug(`Character "${characterData.name}" saved successfully to slot ${nextSlot}`);
         }
 
         if (overwriteTriggered && overwriteCandidate) {
@@ -170,7 +184,7 @@ export const action: ActionFunction = async ({ request }) => {
         return json({ success: true, characters: savedCharacters }, { status: 200 });
 
       } catch (error) {
-        console.error("Error importing default characters:", error);
+        logger.error("Error importing default characters", { error: error instanceof Error ? error.message : "Unknown error" });
         const errorMessage = error instanceof Error ? error.message : 'Failed to process request';
         return json({ error: errorMessage }, { status: 500 });
       }
@@ -196,7 +210,7 @@ export const action: ActionFunction = async ({ request }) => {
       await saveCharacter(user.id, characterData as Character);
 
       // Return success with the saved character
-      console.log(`Character "${characterData.name}" overwritten in slot ${characterData.slotIndex}`);
+      logger.debug(`Character "${characterData.name}" overwritten in slot ${characterData.slotIndex}`);
       return json({ success: true, characters: [characterData] }, { status: 200 });
     }
     
@@ -222,7 +236,7 @@ export const action: ActionFunction = async ({ request }) => {
       throw error;
     }
     
-    console.error("Character management action failed:", error);
+    logger.error("Character management action failed", { error: error instanceof Error ? error.message : "Unknown error" });
     const errorMessage = error instanceof Error ? error.message : 'Failed to process request';
     return json({ error: errorMessage }, { status: 500 });
   }
@@ -285,7 +299,7 @@ export default function Index() {
   
   // Handler for readiness toggle (required by PlayerSetupSlot, but only updates local state here)
   const handleToggleReady = (slotIndex: number, isReady: boolean) => {
-    console.log(`[INDEX] Readiness toggle attempted for slot ${slotIndex}: ${isReady}. (Updating local state)`);
+    logger.debug(`[INDEX] Readiness toggle attempted for slot ${slotIndex}: ${isReady}. (Updating local state)`);
     setPartySlots(prevSlots => {
         const newSlots = [...prevSlots];
         if (newSlots[slotIndex]) {
@@ -347,7 +361,7 @@ export default function Index() {
 
   const handleGenerateRandomCharacter = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("[INDEX] 'Generate Random Character' button pressed. Submitting fetcher to generate locally.");
+    logger.debug("[INDEX] 'Generate Random Character' button pressed. Submitting fetcher to generate locally.");
     
     const formData = new FormData();
     formData.append('_action', 'generateRandomCharacter');
@@ -355,7 +369,7 @@ export default function Index() {
   };
 
   const handleImportDefaultCharacters = async () => {
-    console.log("[INDEX] 'Import Default Characters' button pressed. Submitting fetcher.");
+    logger.debug("[INDEX] 'Import Default Characters' button pressed. Submitting fetcher.");
     const formData = new FormData();
     formData.append('_action', 'importDefaultCharacters');
     fetcher.submit(formData, { method: 'post' });
@@ -366,7 +380,7 @@ export default function Index() {
     const allReady = activeSlots.length > 0 && activeSlots.every(slot => slot.isReady);
 
     if (!allReady) {
-        alert("Please ensure all active player slots are ready before proceeding.");
+        showToast("Please ensure all active player slots are ready before proceeding.", "error");
         return;
     }
     
@@ -381,7 +395,7 @@ export default function Index() {
     if (fetcher.state === 'idle' && fetcher.data) {
       if (fetcher.data.data?.characterData) {
         // AI Character generation success (if that action is used) OR LOCAL RANDOMIZATION SUCCESS
-        console.log("[INDEX] Character data received via fetcher. Opening form.");
+        logger.debug("[INDEX] Character data received via fetcher. Opening form.");
         setEditingCharacter(fetcher.data.data.characterData);
         setIsFormOpen(true);
       } else if (fetcher.data.error) {
@@ -391,15 +405,15 @@ export default function Index() {
           setCharacterToOverwrite(fetcher.data.characterData as Character); 
         } else {
           // General Error (including AI generation failure from generateRandomCharacter)
-          console.error("[INDEX] General Error:", fetcher.data.error);
-          alert(`Operation Failed: ${fetcher.data.error}`);
+          logger.error("[INDEX] General Error", { error: fetcher.data.error });
+          showToast(`Operation Failed: ${fetcher.data.error}`, "error");
         }
       } else if (fetcher.data.characters) {
         // Default characters successfully imported or single save succeeded
-        console.log("[INDEX] Default characters successfully imported or character saved. Refreshing character list.");
+        logger.debug("[INDEX] Default characters successfully imported or character saved. Refreshing character list.");
         if (fetcher.data.characters) {
           fetcher.data.characters.forEach((character: Character) => {
-            console.log(`Character "${character.name}" saved to slot ${character.slotIndex}`);
+            logger.debug(`Character "${character.name}" saved to slot ${character.slotIndex}`);
           });
         }
       }
@@ -449,7 +463,7 @@ export default function Index() {
               />
               
               <h2 className="text-3xl font-medieval text-red-500 mt-10 mb-4">Party Setup (Active Slots)</h2>
-              <div className="mt-8 space-y-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="mt-8 flex flex-wrap justify-center gap-4">
                 {partySlots.map((slot, index) => (
                   <PlayerSetupSlot 
                     key={index}

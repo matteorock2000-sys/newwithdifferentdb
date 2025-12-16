@@ -43,6 +43,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
   const [showPortraitConfirm, setShowPortraitConfirm] = useState(false); // NEW: State for edit-mode portrait prompt
 
   const fetcher = useFetcher<any>();
+  const avatarFetcher = useFetcher<any>(); // NEW: Fetcher for avatar data
 
   const defaultCharacter: Character = {
     id: crypto.randomUUID(),
@@ -98,14 +99,17 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
     fullCharacterData?: Character
   } | undefined;
 
-  const [character, setCharacter] = useState<Character>(() => {
-    let initialChar: Character = { ...defaultCharacter };
-
-    if (initialData) {
-      initialChar = { ...initialChar, ...initialData };
-    }
-    
-    if (aiData) {
+      const [character, setCharacter] = useState<Character>(() => {
+      let initialChar: Character = { ...defaultCharacter };
+  
+      if (initialData) {
+        initialChar = { ...initialChar, ...initialData };
+        // If the loader stripped the avatarUrl due to it being base64, set it to null initially
+        if ((initialData as any)._hasBase64Avatar) {
+          initialChar.avatarUrl = null;
+        }
+      }
+          if (aiData) {
       if (aiData.fullCharacterData) {
         initialChar = { ...initialChar, ...aiData.fullCharacterData };
       } else if (aiData.selectedClass) {
@@ -221,6 +225,28 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
     });
     return mergedCharacter;
   });
+
+  // Effect to fetch base64 avatar if initialData indicates its presence
+  useEffect(() => {
+    if (initialData && (initialData as any)._hasBase64Avatar && initialData.id && !character.avatarUrl && avatarFetcher.state === 'idle' && !isLoadingPortrait) {
+      logger.debug('[NewCharacterForm] InitialData has base64 avatar, fetching from API.');
+      setIsLoadingPortrait(true);
+      avatarFetcher.load(`/api/character.portrait.serve-base64?characterId=${initialData.id}`);
+    }
+  }, [initialData, character.avatarUrl, avatarFetcher, isLoadingPortrait]);
+
+  // Effect to handle avatarFetcher response
+  useEffect(() => {
+    if (avatarFetcher.state === 'idle' && avatarFetcher.data) {
+      if (avatarFetcher.data.avatarDataUri) {
+        logger.debug('[NewCharacterForm] Fetched base64 avatar data successfully.');
+        setCharacter(prev => ({ ...prev!, avatarUrl: avatarFetcher.data.avatarDataUri }));
+      } else if (avatarFetcher.data.error) {
+        logger.error('[NewCharacterForm] Failed to fetch base64 avatar data:', { error: avatarFetcher.data.error });
+      }
+      setIsLoadingPortrait(false);
+    }
+  }, [avatarFetcher.state, avatarFetcher.data]);
 
   // Track if we've already initialized stats for editing characters
   const [hasInitializedStats, setHasInitializedStats] = useState(false);
