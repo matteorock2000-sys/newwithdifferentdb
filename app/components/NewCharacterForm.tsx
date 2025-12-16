@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLocation } from '@remix-run/react';
-import type { Character, Weapon, SpellSlots } from '~/types';
+import type { Character, Weapon, SpellSlots, AbilityScores } from '~/types';
 import { RACES, CLASSES, INVENTORY_ITEMS, CANTRIPS, LEVEL_1_SPELLS, LEVEL_2_SPELLS, TRAITS, IDEALS, BONDS, FLAWS, FIGHT_STYLES, ARMOR_TYPES, SKILLS, SAVING_THROWS } from '~/data/dnd';
 import { Input, Select, TextArea, MultiSelect, WeaponInput, SpellSlotInput } from '~/components/CharacterFormHelpers';
 import { rollAllStats } from '~/utils/dice';
 import { STEPS } from '~/components/characterFormConstants';
 import { useFetcher } from '@remix-run/react';
 import ErrorBoundary from './ErrorBoundary';
+import { logger } from '~/utils/logger';
 
 interface NewCharacterFormProps {
   initialData?: Partial<Character> | null;
@@ -29,7 +30,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
   useEffect(() => {
     if (isEditing && initialData) {
       setEditModeVerified(true);
-      console.log("[EDIT MODE] Edit mode verified for character:", initialData.name);
+      logger.debug('Edit mode verified for character', { characterName: initialData.name });
     } else if (!isEditing) {
       setEditModeVerified(false);
     }
@@ -52,10 +53,33 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
     primaryAttribute: 'Strength', secondaryAttribute: 'Constitution',
     armor: ARMOR_TYPES[0], fightStyle: FIGHT_STYLES[0], ac: 10, initiative: 0, passivePerception: 10,
     savingThrows: [], skills: [],
-    weapons: { primary: { name: 'Unarmed Strike', attackBonus: '+0', damage: '1d1', damageAttribute: 'Strength' } },
+    weapons: { 
+      primary: { name: 'Unarmed Strike', attackBonus: '+0', damage: '1d1', damageAttribute: 'Strength' },
+      secondary: undefined, // Explicitly set as undefined if optional and not present
+      ranged: undefined,    // Explicitly set as undefined if optional and not present
+    },
     equipment: [],
-    spells: { cantrips: [], level1: [], level2: [] },
-    spellSlots: { level1: { current: 0, max: 0 }, level2: { current: 0, max: 0 } },
+    spells: { 
+      cantrips: [], 
+      level1: [], 
+      level2: [],
+      // Ensure all levels that are optional in the Character interface are explicitly undefined here
+      level3: undefined, level4: undefined, level5: undefined, level6: undefined,
+      level7: undefined, level8: undefined, level9: undefined, level10: undefined,
+      level11: undefined, level12: undefined, level13: undefined, level14: undefined,
+      level15: undefined, level16: undefined, level17: undefined, level18: undefined,
+      level19: undefined, level20: undefined,
+    },
+    spellSlots: { 
+      level1: { current: 0, max: 0 }, 
+      level2: { current: 0, max: 0 },
+      // Ensure all levels that are optional in the Character interface are explicitly undefined here
+      level3: undefined, level4: undefined, level5: undefined, level6: undefined,
+      level7: undefined, level8: undefined, level9: undefined, level10: undefined,
+      level11: undefined, level12: undefined, level13: undefined, level14: undefined,
+      level15: undefined, level16: undefined, level17: undefined, level18: undefined,
+      level19: undefined, level20: undefined,
+    },
     spellcastingAbility: 'Charisma', spellSaveDC: 8, spellAttackBonus: '+0',
     features: [], inventory: [],
     personality: { trait: '', ideal: '', bond: '', flaw: '' },
@@ -74,15 +98,19 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
     fullCharacterData?: Character
   } | undefined;
 
-  const [character, setCharacter] = useState<Partial<Character>>(() => {
-    let base: Partial<Character> = initialData ? { ...initialData } : {};
+  const [character, setCharacter] = useState<Character>(() => {
+    let initialChar: Character = { ...defaultCharacter };
+
+    if (initialData) {
+      initialChar = { ...initialChar, ...initialData };
+    }
     
     if (aiData) {
       if (aiData.fullCharacterData) {
-        base = { ...aiData.fullCharacterData };
+        initialChar = { ...initialChar, ...aiData.fullCharacterData };
       } else if (aiData.selectedClass) {
-        base = {
-          ...base,
+        initialChar = {
+          ...initialChar,
           class: aiData.selectedClass,
           race: aiData.selectedRace,
           background: aiData.selectedBackground,
@@ -92,26 +120,105 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
       }
     }
 
-    const mergedCharacter = {
-      ...defaultCharacter,
-      ...base,
-      stats: { ...defaultCharacter.stats, ...(base.stats || {}) },
-      // Ensure weapons are properly merged, especially when base.weapons is partial
-      weapons: { 
-        primary: { ...defaultCharacter.weapons.primary, ...(base.weapons?.primary || {}) },
-        secondary: base.weapons?.secondary ? { ...defaultCharacter.weapons.secondary, ...base.weapons.secondary } : undefined,
-        ranged: base.weapons?.ranged ? { ...defaultCharacter.weapons.ranged, ...base.weapons.ranged } : undefined,
-      },
-      spellSlots: { ...defaultCharacter.spellSlots, ...(base.spellSlots || {}) },
-      spells: { ...defaultCharacter.spells, ...(base.spells || {}) },
-      personality: { ...defaultCharacter.personality, ...(base.personality || {}) },
-      id: base.id || defaultCharacter.id,
-      userId: base.userId || defaultCharacter.userId,
-      slotIndex: base.slotIndex !== undefined ? base.slotIndex : (slotIndex !== undefined ? slotIndex : 0),
-      avatarUrl: base.avatarUrl || defaultCharacter.avatarUrl, // Merge avatarUrl
-    };
+    const mergedCharacter: Character = { // Explicitly cast to Character
+      ...initialChar,
+      // Ensure all required properties are explicitly set or defaulted
+      id: initialChar.id || defaultCharacter.id,
+      name: initialChar.name || defaultCharacter.name,
+      race: initialChar.race || defaultCharacter.race,
+      class: initialChar.class || defaultCharacter.class,
+      level: initialChar.level || defaultCharacter.level,
+      experience: initialChar.experience || defaultCharacter.experience,
+      alignment: initialChar.alignment || defaultCharacter.alignment,
+      background: initialChar.background || defaultCharacter.background,
+      speed: initialChar.speed || defaultCharacter.speed,
+      hitDice: initialChar.hitDice || defaultCharacter.hitDice,
+      hp: initialChar.hp || defaultCharacter.hp,
+      maxHp: initialChar.maxHp || defaultCharacter.maxHp,
+      proficiencyBonus: initialChar.proficiencyBonus || defaultCharacter.proficiencyBonus,
+      stats: initialChar.stats || defaultCharacter.stats,
+      savingThrows: initialChar.savingThrows || defaultCharacter.savingThrows,
+      skills: initialChar.skills || defaultCharacter.skills,
+      equipment: initialChar.equipment || defaultCharacter.equipment,
+      inventory: initialChar.inventory || defaultCharacter.inventory,
+      ac: initialChar.ac || defaultCharacter.ac,
+      initiative: initialChar.initiative || defaultCharacter.initiative,
+      passivePerception: initialChar.passivePerception || defaultCharacter.passivePerception,
+      features: initialChar.features || defaultCharacter.features,
+      personality: initialChar.personality || defaultCharacter.personality,
+      avatarUrl: initialChar.avatarUrl || defaultCharacter.avatarUrl,
+      userId: initialChar.userId || defaultCharacter.userId,
+      slotIndex: initialChar.slotIndex !== undefined ? initialChar.slotIndex : (slotIndex !== undefined ? slotIndex : defaultCharacter.slotIndex),
 
-    console.log("NewCharacterForm: Initial character state:", mergedCharacter);
+      // Ensure nested objects are also fully defined or defaulted
+      // Ensure nested objects are also fully defined or defaulted
+      weapons: {
+        primary: { ...(defaultCharacter.weapons?.primary || {}), ...(initialChar.weapons?.primary || {}) } as Weapon,
+        secondary: initialChar.weapons?.secondary || defaultCharacter.weapons?.secondary,
+        ranged: initialChar.weapons?.ranged || defaultCharacter.weapons?.ranged,
+      } as Character['weapons'], // Explicitly cast to ensure non-null
+      spells: {
+        cantrips: initialChar.spells?.cantrips || defaultCharacter.spells?.cantrips || [],
+        level1: initialChar.spells?.level1 || defaultCharacter.spells?.level1 || [],
+        level2: initialChar.spells?.level2 || defaultCharacter.spells?.level2 || [],
+        level3: initialChar.spells?.level3 || defaultCharacter.spells?.level3,
+        level4: initialChar.spells?.level4 || defaultCharacter.spells?.level4,
+        level5: initialChar.spells?.level5 || defaultCharacter.spells?.level5,
+        level6: initialChar.spells?.level6 || defaultCharacter.spells?.level6,
+        level7: initialChar.spells?.level7 || defaultCharacter.spells?.level7,
+        level8: initialChar.spells?.level8 || defaultCharacter.spells?.level8,
+        level9: initialChar.spells?.level9 || defaultCharacter.spells?.level9,
+        level10: initialChar.spells?.level10 || defaultCharacter.spells?.level10,
+        level11: initialChar.spells?.level11 || defaultCharacter.spells?.level11,
+        level12: initialChar.spells?.level12 || defaultCharacter.spells?.level12,
+        level13: initialChar.spells?.level13 || defaultCharacter.spells?.level13,
+        level14: initialChar.spells?.level14 || defaultCharacter.spells?.level14,
+        level15: initialChar.spells?.level15 || defaultCharacter.spells?.level15,
+        level16: initialChar.spells?.level16 || defaultCharacter.spells?.level16,
+        level17: initialChar.spells?.level17 || defaultCharacter.spells?.level17,
+        level18: initialChar.spells?.level18 || defaultCharacter.spells?.level18,
+        level19: initialChar.spells?.level19 || defaultCharacter.spells?.level19,
+        level20: initialChar.spells?.level20 || defaultCharacter.spells?.level20,
+      } as Character['spells'], // Explicitly cast to ensure non-null
+      spellSlots: {
+        level1: initialChar.spellSlots?.level1 || defaultCharacter.spellSlots?.level1 || { current: 0, max: 0 },
+        level2: initialChar.spellSlots?.level2 || defaultCharacter.spellSlots?.level2 || { current: 0, max: 0 },
+        level3: initialChar.spellSlots?.level3 || defaultCharacter.spellSlots?.level3,
+        level4: initialChar.spellSlots?.level4 || defaultCharacter.spellSlots?.level4,
+        level5: initialChar.spellSlots?.level5 || defaultCharacter.spellSlots?.level5,
+        level6: initialChar.spellSlots?.level6 || defaultCharacter.spellSlots?.level6,
+        level7: initialChar.spellSlots?.level7 || defaultCharacter.spellSlots?.level7,
+        level8: initialChar.spellSlots?.level8 || defaultCharacter.spellSlots?.level8,
+        level9: initialChar.spellSlots?.level9 || defaultCharacter.spellSlots?.level9,
+        level10: initialChar.spellSlots?.level10 || defaultCharacter.spellSlots?.level10,
+        level11: initialChar.spellSlots?.level11 || defaultCharacter.spellSlots?.level11,
+        level12: initialChar.spellSlots?.level12 || defaultCharacter.spellSlots?.level12,
+        level13: initialChar.spellSlots?.level13 || defaultCharacter.spellSlots?.level13,
+        level14: initialChar.spellSlots?.level14 || defaultCharacter.spellSlots?.level14,
+        level15: initialChar.spellSlots?.level15 || defaultCharacter.spellSlots?.level15,
+        level16: initialChar.spellSlots?.level16 || defaultCharacter.spellSlots?.level16,
+        level17: initialChar.spellSlots?.level17 || defaultCharacter.spellSlots?.level17,
+        level18: initialChar.spellSlots?.level18 || defaultCharacter.spellSlots?.level18,
+        level19: initialChar.spellSlots?.level19 || defaultCharacter.spellSlots?.level19,
+        level20: initialChar.spellSlots?.level20 || defaultCharacter.spellSlots?.level20,
+      } as SpellSlots, // Explicitly cast to ensure non-null
+      primaryAttribute: initialChar.primaryAttribute || defaultCharacter.primaryAttribute,
+      secondaryAttribute: initialChar.secondaryAttribute || defaultCharacter.secondaryAttribute,
+      armor: initialChar.armor || defaultCharacter.armor,
+      fightStyle: initialChar.fightStyle || defaultCharacter.fightStyle,
+      spellcastingAbility: initialChar.spellcastingAbility || defaultCharacter.spellcastingAbility,
+      spellSaveDC: initialChar.spellSaveDC || defaultCharacter.spellSaveDC,
+      spellAttackBonus: initialChar.spellAttackBonus || defaultCharacter.spellAttackBonus,
+      statRolls: initialChar.statRolls || defaultCharacter.statRolls,
+      modifiers: initialChar.modifiers || defaultCharacter.modifiers,
+      totalAc: initialChar.totalAc || defaultCharacter.totalAc,
+      appearance: initialChar.appearance || defaultCharacter.appearance,
+    } as Character;
+
+    logger.debug('NewCharacterForm: Initial character state', { 
+      ...mergedCharacter, 
+      avatarUrl: mergedCharacter.avatarUrl ? `${mergedCharacter.avatarUrl.substring(0, 50)}...` : mergedCharacter.avatarUrl 
+    });
     return mergedCharacter;
   });
 
@@ -119,24 +226,24 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
   const [hasInitializedStats, setHasInitializedStats] = useState(false);
 
   useEffect(() => {
-    console.log("NewCharacterForm: Initializing state based on initialData/aiData.");
+    logger.debug('Initializing state based on initialData/aiData');
     
     if (initialData && !hasInitializedStats) {
-        console.log("Form initialized with initialData. Checking stats initialization.");
+        logger.debug('Form initialized with initialData. Checking stats initialization');
         // Only roll stats if this is a new character being edited, not an existing one
         if (!character.stats?.strength || character.stats.strength === 10) { 
             // Check if this is actually a character with existing stats that got cleared
             if (initialData.stats && Object.values(initialData.stats).some(val => val > 10)) {
-                console.log("Existing character has valid stats, preserving them.");
+                logger.debug('Existing character has valid stats, preserving them');
                 setHasInitializedStats(true);
                 // Stats are valid, don't overwrite
             } else {
-                console.log("Initial data loaded, forcing stat roll as stats appear uninitialized.");
+                logger.debug('Initial data loaded, forcing stat roll as stats appear uninitialized');
                 setCharacter(prev => ({ ...prev!, stats: rollAllStats().stats }));
                 setHasInitializedStats(true);
             }
         } else {
-            console.log("Character has valid stats, skipping stat roll.");
+            logger.debug('Character has valid stats, skipping stat roll');
             setHasInitializedStats(true);
         }
         return;
@@ -145,12 +252,12 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
     if (aiData) {
         if (aiData.fullCharacterData) {
             if (!character.stats?.strength || character.stats.strength === 10) {
-                console.log("Full AI data loaded via state, forcing stat roll.");
+                logger.debug('Full AI data loaded via state, forcing stat roll');
                 setCharacter(prev => ({ ...prev!, stats: rollAllStats().stats })); 
             }
         } else if (aiData.selectedClass) {
             if (!character.stats?.strength || character.stats.strength === 10) { 
-                console.log("Partial AI data loaded via state, forcing stat roll.");
+                logger.debug('Partial AI data loaded via state, forcing stat roll');
                 setCharacter(prev => ({ ...prev!, stats: rollAllStats().stats })); 
             }
         }
@@ -158,7 +265,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
     }
     
     if (character && character.class && character.race && character.background && (!character.features?.length || !character.personality?.trait)) {
-      console.log("Triggering AI details fetcher load based on partial data.");
+      logger.debug('Triggering AI details fetcher load based on partial data');
       fetcher.load(`/api/generate-character-details?class=${character.class}&race=${character.race}&background=${character.background}`);
     }
   }, [character?.class, character?.race, character?.background, character?.features, character?.personality, fetcher, aiData, character.stats?.strength, initialData, hasInitializedStats, character]);
@@ -200,13 +307,13 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
     setIsLoadingPortrait(false);
     setPortraitRetryCount(0);
     setPortraitCancelled(true);
-    console.log('[PORTRAIT] Generation cancelled by user');
+    logger.debug('Generation cancelled by user');
   };
 
   // Effect to trigger retries when portraitRetryCount changes
   useEffect(() => {
     if (portraitRetryCount > 0 && portraitRetryCount <= MAX_PORTRAIT_RETRIES) {
-      console.log(`[PORTRAIT] Executing retry attempt #${portraitRetryCount}`);
+      logger.debug('Executing retry attempt', { retryCount: portraitRetryCount });
       // Use a timeout to prevent rapid-fire retries and allow state to settle
       const timer = setTimeout(() => handleGeneratePortrait(), 500);
       return () => clearTimeout(timer);
@@ -222,20 +329,30 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
       slotIndex: character.slotIndex !== undefined ? character.slotIndex : (slotIndex !== undefined ? slotIndex : 0),
       avatarUrl: character.avatarUrl || defaultCharacter.avatarUrl, // Ensure avatarUrl is passed
       stats: character.stats || defaultCharacter.stats,
-      weapons: { ...defaultCharacter.weapons, ...character.weapons },
+      weapons: { 
+        primary: { ...defaultCharacter.weapons!.primary, ...(character.weapons?.primary || {}) } as Weapon,
+        secondary: { ...(defaultCharacter.weapons!.secondary || {}), ...(character.weapons?.secondary || {}) } as Weapon | undefined,
+        ranged: { ...(defaultCharacter.weapons!.ranged || {}), ...(character.weapons?.ranged || {}) } as Weapon | undefined,
+      },
       spellSlots: { 
-        ...defaultCharacter.spellSlots, 
-        ...character.spellSlots,
-        level1: { ...(defaultCharacter.spellSlots.level1 || { current: 0, max: 0 }), ...(character.spellSlots?.level1 || {}) },
-        level2: { ...(defaultCharacter.spellSlots.level2 || { current: 0, max: 0 }), ...(character.spellSlots?.level2 || {}) }
-      },
+        level1: { ...(defaultCharacter.spellSlots!.level1), ...(character.spellSlots?.level1 || {}) },
+        level2: { ...(defaultCharacter.spellSlots!.level2), ...(character.spellSlots?.level2 || {}) },
+        level3: character.spellSlots?.level3, level4: character.spellSlots?.level4, level5: character.spellSlots?.level5, level6: character.spellSlots?.level6,
+        level7: character.spellSlots?.level7, level8: character.spellSlots?.level8, level9: character.spellSlots?.level9, level10: character.spellSlots?.level10,
+        level11: character.spellSlots?.level11, level12: character.spellSlots?.level12, level13: character.spellSlots?.level13, level14: character.spellSlots?.level14,
+        level15: character.spellSlots?.level15, level16: character.spellSlots?.level16, level17: character.spellSlots?.level17, level18: character.spellSlots?.level18,
+        level19: character.spellSlots?.level19, level20: character.spellSlots?.level20,
+      } as SpellSlots, // Cast to SpellSlots
       spells: { 
-        ...defaultCharacter.spells, 
-        ...character.spells,
-        cantrips: [...(defaultCharacter.spells.cantrips || []), ...(character.spells?.cantrips || [])],
-        level1: [...(defaultCharacter.spells.level1 || []), ...(character.spells?.level1 || [])],
-        level2: [...(defaultCharacter.spells.level2 || []), ...(character.spells?.level2 || [])]
-      },
+        cantrips: [...(defaultCharacter.spells!.cantrips || []), ...(character.spells?.cantrips || [])],
+        level1: [...(defaultCharacter.spells!.level1 || []), ...(character.spells?.level1 || [])],
+        level2: [...(defaultCharacter.spells!.level2 || []), ...(character.spells?.level2 || [])],
+        level3: character.spells?.level3, level4: character.spells?.level4, level5: character.spells?.level5, level6: character.spells?.level6,
+        level7: character.spells?.level7, level8: character.spells?.level8, level9: character.spells?.level9, level10: character.spells?.level10,
+        level11: character.spells?.level11, level12: character.spells?.level12, level13: character.spells?.level13, level14: character.spells?.level14,
+        level15: character.spells?.level15, level16: character.spells?.level16, level17: character.spells?.level17, level18: character.spells?.level18,
+        level19: character.spells?.level19, level20: character.spells?.level20,
+      } as Character['spells'], // Cast to Character['spells']
       personality: { ...defaultCharacter.personality, ...character.personality },
     };
     
@@ -255,7 +372,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
       !isEditing && // Only for new characters
       allReady // Required fields complete
     ) {
-      console.log('[AUTO-PORTRAIT] Triggering automatic portrait generation');
+      logger.debug('Triggering automatic portrait generation');
       handleGeneratePortrait();
     }
     
@@ -297,22 +414,37 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
     setCharacter(prev => {
       const newChar = { ...prev! };
       if (newChar[category] === undefined || newChar[category] === null) {
-        if (category === 'stats') {
-          newChar[category] = { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 };
-        } else if (category === 'weapons') {
-          newChar[category] = { primary: { name: 'Unarmed Strike', attackBonus: '+0', damage: '1d1', damageAttribute: 'Strength' } };
-        } else if (category === 'spellSlots') {
-          newChar[category] = { level1: { current: 0, max: 0 }, level2: { current: 0, max: 0 } };
-        } else if (category === 'spells') {
-          newChar[category] = { cantrips: [], level1: [], level2: [] };
-        } else if (category === 'personality') {
-          newChar[category] = { trait: '', ideal: '', bond: '', flaw: '' };
-        } else {
-          newChar[category] = {};
+        switch (category) {
+          case 'stats':
+            newChar.stats = { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 };
+            break;
+          case 'weapons':
+            newChar.weapons = { primary: { name: 'Unarmed Strike', attackBonus: '+0', damage: '1d1', damageAttribute: 'Strength' } };
+            break;
+          case 'spellSlots':
+            newChar.spellSlots = { level1: { current: 0, max: 0 }, level2: { current: 0, max: 0 } };
+            break;
+          case 'spells':
+            newChar.spells = { cantrips: [], level1: [], level2: [] };
+            break;
+          case 'personality':
+            newChar.personality = { trait: '', ideal: '', bond: '', flaw: '' };
+            break;
+          default:
+            // For other nested object types that might be undefined, ensure they are initialized as objects
+            // This is a defensive move, ideally all object types would be covered by cases above
+            // Explicitly cast to Record<string, any> to allow property assignment
+            if (typeof newChar[category] === 'object' && newChar[category] !== null) {
+              // If it's already an object, just ensure it's not null
+            } else {
+              (newChar as Record<string, any>)[category] = {};
+            }
         }
       }
       
-      newChar[category] = { ...(newChar[category] as object || {}), [field]: value || '' };
+      // Now, safely update the specific field within the nested object
+      // This requires type assertion or careful handling as TypeScript doesn't know the exact type of newChar[category] here
+      (newChar[category] as any)[field] = value || '';
       return newChar;
     });
   };  
@@ -345,16 +477,28 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
   };
 
   const handleSpellSlotsChange = (level: 'level1' | 'level2', type: 'current' | 'max', value: number) => {
-    setCharacter(prev => ({
-      ...prev!,
-      spellSlots: { 
-        ...prev!.spellSlots, 
-        [level]: { 
-          ...(prev!.spellSlots?.[level] || { current: 0, max: 0 }), 
-          [type]: value 
+    setCharacter(prev => {
+      const currentSpellSlots = prev!.spellSlots || {
+        level1: { current: 0, max: 0 },
+        level2: { current: 0, max: 0 },
+        level3: undefined, level4: undefined, level5: undefined, level6: undefined,
+        level7: undefined, level8: undefined, level9: undefined, level10: undefined,
+        level11: undefined, level12: undefined, level13: undefined, level14: undefined,
+        level15: undefined, level16: undefined, level17: undefined, level18: undefined,
+        level19: undefined, level20: undefined,
+      };
+
+      return {
+        ...prev!,
+        spellSlots: { 
+          ...currentSpellSlots, 
+          [level]: { 
+            ...(currentSpellSlots[level] || { current: 0, max: 0 }), 
+            [type]: value 
+          } 
         } 
-      },
-    }));
+      };
+    });
   };
   
   const handleRollStats = () => {
@@ -368,7 +512,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
     
     // Check regeneration limit
     if (regenerationCount >= MAX_REGENERATIONS) {
-      console.log('[PORTRAIT] Regeneration limit reached. Cannot generate more portraits.');
+      logger.debug('Regeneration limit reached. Cannot generate more portraits');
       return; // Prevent further generations
     }
 
@@ -382,7 +526,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
 
     
     // Fallback to server-side generation
-    console.log('[PORTRAIT] Falling back to server-side generation...');
+    logger.debug('Falling back to server-side generation');
     
     const formData = new FormData();
     formData.append('intent', 'generatePortrait');
@@ -394,7 +538,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
       formData.append('characterId', character.id);
     }
     
-    console.log(`[PORTRAIT] Submitting to action: /api/character/portrait/generate`);
+    logger.debug('Submitting to action', { action: '/api/character/portrait/generate' });
     fetcher.submit(formData, { method: 'post', action: '/api/character/portrait/generate' });
     
   }, [isLoadingPortrait, regenerationCount, character, finalizeCharacter, fetcher]);
@@ -425,38 +569,40 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
 
   // Fix useEffect dependencies by using stable references
   useEffect(() => {
-    console.log('[PORTRAIT] Fetcher state changed:', fetcher.state);
-    console.log('[PORTRAIT] Fetcher data:', fetcher.data);
+    logger.debug('Fetcher state changed', { state: fetcher.state });
+    logger.debug('Fetcher data', { data: fetcher.data });
     
-    if (fetcher.state === 'idle' && fetcher.data) {
-              if (fetcher.data.success) {
-                console.log('[PORTRAIT] Server-side generation completed successfully');
-                if (fetcher.data.portraitUrl) { // <--- Changed to portraitUrl
-                  const imageUrl = fetcher.data.portraitUrl; // <--- Directly assign, no prefixing
-                  setCharacter(prev => ({ ...prev!, avatarUrl: imageUrl }));
-                  setIsLoadingPortrait(false);
-                  setPortraitRetryCount(0);
-                } else {
-                  console.log('[PORTRAIT] Server response did not contain a portrait URL.'); // <--- Updated log
-                  // If the intent was just to save, we don't need to do anything here.
-                  if (fetcher.submission?.formData.get('intent') === 'savePortraitUrl') {
-                    console.log('[PORTRAIT] Portrait URL saved successfully.');
-                  }
-                }
-              } else {
-        console.error('[PORTRAIT] Server-side generation failed:', fetcher.data.error);
-        if (portraitRetryCount < MAX_PORTRAIT_RETRIES && !portraitCancelled) {
-          console.log(`[PORTRAIT] Retrying generation (attempt ${portraitRetryCount + 1}/${MAX_PORTRAIT_RETRIES})`);
-          // Let the dedicated useEffect handle the retry logic
-          setPortraitRetryCount(prev => prev + 1);
+    if (fetcher.state === 'idle') {
+      if (fetcher.data) { // Data is available, meaning the fetch is complete
+        if (fetcher.data.success) {
+          logger.debug('Server-side generation completed successfully');
+          if (fetcher.data.portraitBase64) { 
+            const imageUrl = fetcher.data.portraitBase64; 
+            setCharacter(prev => ({ ...prev!, avatarUrl: imageUrl }));
+            setPortraitRetryCount(0); // Reset retry count on success
+          } else {
+            // If success but no portraitBase64, it's an unexpected scenario for portrait generation
+            logger.error('Server-side portrait generation succeeded but did not return portrait data.');
+          }
         } else {
-          console.error('[PORTRAIT] Max retries reached or generation cancelled');
-          setIsLoadingPortrait(false);
-          setPortraitRetryCount(0);
+          logger.error('Server-side generation failed', { error: fetcher.data.error as string });
+          if (portraitRetryCount < MAX_PORTRAIT_RETRIES && !portraitCancelled) {
+            logger.debug('Retrying generation', { 
+              attempt: portraitRetryCount + 1,
+              maxRetries: MAX_PORTRAIT_RETRIES
+            });
+            // Let the dedicated useEffect handle the retry logic
+            setPortraitRetryCount(prev => prev + 1);
+          } else {
+            logger.error('Max retries reached or generation cancelled');
+            setPortraitRetryCount(0);
+          }
         }
+        // Always set isLoadingPortrait to false here, as the fetcher is now idle and data is processed.
+        setIsLoadingPortrait(false);
       }
     }
-  }, [fetcher.data, fetcher.state, portraitCancelled]);
+  }, [fetcher.data, fetcher.state, portraitCancelled, portraitRetryCount]);
 
   // Auto-trigger portrait generation when reaching Step 4 or when fields become complete
   useEffect(() => {
@@ -469,7 +615,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
       !isEditing && // Only for new characters
       allReady // Required fields complete
     ) {
-      console.log('[AUTO-PORTRAIT] Triggering automatic portrait generation');
+      logger.debug('Triggering automatic portrait generation');
       handleGeneratePortrait();
     }
     
@@ -534,18 +680,20 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
               </div>
             )}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-              {Object.keys(character.stats || {}).map(stat => (
+            {Object.keys(character.stats || {}).map((statKey) => { 
+                const stat = statKey as keyof AbilityScores;
+                return ( // Change stat type to string
                 <Input 
                   key={stat}
                   label={stat.charAt(0).toUpperCase() + stat.slice(1)} 
                   name={stat} 
                   type="number"
-                  // @ts-expect-error Dynamic stat access is safe here
-                  value={character.stats?.[stat] || 10} 
-                  onChange={(e) => handleNestedChange('stats', stat, parseInt(e.target.value, 10))} 
+                  value={character.stats?.[stat as keyof AbilityScores] || 10} // Cast here to ensure safe access
+                  onChange={(e) => handleNestedChange('stats', stat as keyof AbilityScores, parseInt(e.target.value, 10))} 
                   min="1"
                 />
-              ))}
+              );
+              })}
             </div>
             <div className="space-y-4">
               <Select label="Primary Attribute" name="primaryAttribute" value={character.primaryAttribute} onChange={handleInputChange} options={['Strength', 'Dexterity', 'Constitution', 'Intelligence', 'Wisdom', 'Charisma']} />
