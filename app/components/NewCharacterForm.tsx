@@ -578,6 +578,7 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
           logger.debug('Server-side generation completed successfully');
           if (fetcher.data.portraitUrl) { 
             const imageUrl = fetcher.data.portraitUrl; 
+            logger.debug("Client received portraitUrl:", { imageUrl });
             setCharacter(prev => ({ ...prev!, avatarUrl: imageUrl }));
             setPortraitRetryCount(0); // Reset retry count on success
           } else {

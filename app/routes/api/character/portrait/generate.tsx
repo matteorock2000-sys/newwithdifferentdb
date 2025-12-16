@@ -38,7 +38,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
   try {
     const character: Character = JSON.parse(characterDataStr);
-    logger.debug("[PORTRAIT API] Parsed character:", { characterName: character.name });
+    logger.debug("[PORTRAIT API] Parsed character:", { 
+    characterName: character.name,
+    characterId: character.id,
+    race: character.race,
+    class: character.class,
+    level: character.level,
+    avatarUrl: character.avatarUrl ? `${character.avatarUrl.substring(0, 50)}...` : character.avatarUrl
+  });
     
     // Ensure the character belongs to the user or is a new character being created
     if (character.userId && character.userId !== userId) {
@@ -74,6 +81,7 @@ export async function action({ request }: ActionFunctionArgs) {
       logger.debug("[PORTRAIT API] Portrait URL saved to character");
     }
 
+    logger.debug("[PORTRAIT API] Returning portrait URL", { portraitUrl: publicUrl, characterId });
     return json({ success: true, portraitUrl: publicUrl, characterId }, { status: 200 });
 
   } catch (error) {
