@@ -348,7 +348,7 @@ export default function PlayerSetupSlot({
     const canToggleReady = (type === 'Human' || type === 'AI') && !!characterId && !isSlotLocked;
 
     return (
-        <div className={`p-4 rounded-lg shadow-lg transition duration-300 relative
+        <div className={`w-full min-w-0 p-4 rounded-lg shadow-lg transition duration-300 relative
             ${isReady ? 'bg-green-900 border-2 border-green-500' : 'bg-gray-700 border-2 border-gray-600'}
             ${isHostSlot ? 'border-4 border-red-500' : ''}
             ${isSlotLocked ? 'bg-blue-900 border-blue-500' : ''}

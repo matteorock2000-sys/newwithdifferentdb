@@ -49,21 +49,6 @@ export async function action({ request }: ActionFunctionArgs) {
     const imageUrl = await generateCharacterPortrait(character);
     logger.debug("[PORTRAIT API] Portrait generated successfully, URL:", { imageUrl });
 
-    // If a characterId is provided, save the portrait to the existing character
-    if (characterId) {
-      const existingCharacter = await getCharacterById(userId, characterId);
-      if (!existingCharacter) {
-        return json({ success: false, error: "Character not found." }, { status: 404 });
-      }
-      
-      const updatedCharacter: Character = {
-        ...existingCharacter,
-        avatarUrl: imageUrl, // Save the URL, not the base64 string
-      };
-      await saveCharacter(userId, updatedCharacter);
-      logger.debug("[PORTRAIT API] Portrait URL saved to character");
-    }
-
     logger.debug("[PORTRAIT API] Returning portrait URL", { portraitUrl: imageUrl, characterId });
     return json({ success: true, portraitUrl: imageUrl, characterId }, { status: 200 });
 
