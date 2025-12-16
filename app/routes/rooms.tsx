@@ -1,13 +1,16 @@
 import { json, LoaderFunction, ActionFunction } from "@remix-run/node";
 import { useLoaderData, useFetcher, Form, Link, useNavigate } from "@remix-run/react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { requireUser } from "~/services/auth.server";
 import { getCharactersForUser, getAndClearTemporaryPartySetup, db } from "~/services/db.server";
-import { getSession, commitSession } from "~/sessions";
-import type { Character, User, PlayerSlot } from "~/types";
+import { getSession, commitSession, cleanupSession } from "~/sessions";
+import type { Character, User, PlayerSlot, Room } from "~/types";
 import PlayerSetupSlot from "~/components/PlayerSetupSlot";
-import { handleRoomAction, getAllActiveRooms } from "~/services/room.server";
+import { handleRoomAction, getAllActiveRooms } from "~/services/roomCore.server";
 import { useGlobalToast } from "~/utils/toast";
+import { showToast } from "~/utils/toast";
+import { logger } from "~/utils/logger";
+import { debounce } from "~/utils/debounce";
 
 interface LoaderData {
   user: User;
@@ -65,7 +68,9 @@ export const loader: LoaderFunction = async ({ request }) => {
         
         // Only log when party setup is actually found and used
         if (userPartyData.length > 0) {
-            console.log("[ROOMS LOADER] Found valid party setup in DB. Using it as initial slots.");
+            logger.debug('Found valid party setup in DB. Using it as initial slots', { 
+              partyData: userPartyData
+            });
             
             // NEW LOGGING: List character names
             const characterNames = initialPartySlots
@@ -73,17 +78,21 @@ export const loader: LoaderFunction = async ({ request }) => {
                 .map(slot => slot.characterName);
                 
             if (characterNames.length > 0) {
-                console.log(`[ROOMS LOADER] Characters in party: ${characterNames.join(', ')}`);
+                logger.debug('Characters in party', { characterNames });
             }
         }
         // END NEW LOGGING
 
     } else {
-        console.log("[ROOMS LOADER] Found party data in DB but format is invalid. Using default slots.");
+        logger.debug('Found party data in DB but format is invalid. Using default slots', { 
+          partyData: userPartyData
+        });
     }
   } else {
     // Only log this once per user session, not on every poll
-    console.log("[ROOMS LOADER] No temporary party setup found in DB. Using default slots.");
+    logger.debug('No temporary party setup found in DB. Using default slots', { 
+      userId: user.id
+    });
   }
 
   // --- END: Database-based Party Setup Retrieval ---
@@ -97,7 +106,7 @@ export const loader: LoaderFunction = async ({ request }) => {
     .in('id', hostIds);
 
   if (usersError) {
-    console.error("Error fetching host usernames:", usersError);
+    logger.error('Error fetching host usernames', { error: usersError });
   }
 
   const hostUsernames: Record<string, string> = (usersData || []).reduce((acc, u) => {
@@ -118,7 +127,7 @@ export const loader: LoaderFunction = async ({ request }) => {
     error
   }, {
     headers: {
-      "Set-Cookie": await commitSession(session),
+      "Set-Cookie": await commitSession(cleanupSession(session)),
     },
   });
 };
@@ -126,22 +135,31 @@ export const loader: LoaderFunction = async ({ request }) => {
 export const action: ActionFunction = async ({ request }) => {
     const user = await requireUser(request);
     try {
-        console.log(`[ROOMS ACTION] User ${user.id.substring(0, 8)} attempting room action...`);
+        logger.debug('User attempting room action', { 
+          userId: user.id.substring(0, 8)
+        });
         // Delegate room creation/joining logic to room.server.ts
         const result = await handleRoomAction(request, { userId: user.id });
-        console.log(`[ROOMS ACTION] Room action completed for user ${user.id.substring(0, 8)}, result:`, result);
+        logger.debug('Room action completed', { 
+          userId: user.id.substring(0, 8),
+          result
+        });
         return result;
     } catch (error) {
         // CRITICAL FIX: If the error is a Response object (which happens during a redirect), re-throw it.
         if (error instanceof Response) {
-            console.log(`[ROOMS ACTION] Redirect caught for user ${user.id.substring(0, 8)}: ${error.status} ${error.statusText}`);
-            console.log(`[ROOMS ACTION] Redirect location:`, error.headers.get('Location'));
+            logger.debug('Redirect caught for user', { 
+              userId: user.id.substring(0, 8),
+              status: error.status,
+              statusText: error.statusText,
+              location: error.headers.get('Location')
+            });
             // Log the full response to see what's happening
-            console.log(`[ROOMS ACTION] Full redirect response:`, error);
+            logger.debug('Full redirect response', { error });
             // Ensure the redirect is properly handled
             throw error;
         }
-        console.error("Room action failed:", error);
+        logger.error('Room action failed', { error });
         const errorMessage = error instanceof Error ? error.message : 'Failed to process room action';
         // Return error message in JSON response for fetcher to catch
         return json({ error: errorMessage }, { status: 400 });
@@ -176,7 +194,7 @@ const { user, characters, initialPartySlots }  = loaderData;
         if (fetcher.state === 'idle' && fetcher.formMethod === undefined) {
             fetcher.load('/rooms');
         }
-    }, 5000); // Poll every 5 seconds
+    }, 10000); // Poll every 10 seconds
 
     return () => clearInterval(interval);
   }, [fetcher]);
@@ -187,12 +205,14 @@ const { user, characters, initialPartySlots }  = loaderData;
         if (fetcher.data.activeRooms) {
             setActiveRooms(fetcher.data.activeRooms);
             // NEW CLIENT LOGGING: Log received active rooms data
-            console.log("[CLIENT ROOMS FETCHED] Active Rooms Data:", fetcher.data.activeRooms.map(r => ({
+            logger.debug('Active Rooms Data received', {
+              activeRooms: fetcher.data.activeRooms.map(r => ({
                 name: r.name,
                 code: r.code,
                 activeSlotsCount: r.activeSlotsCount,
                 participantsCount: r.participants.length
-            })));
+              }))
+            });
         }
         if (fetcher.data.hostUsernames) {
             setHostUsernames(fetcher.data.hostUsernames);
@@ -214,13 +234,13 @@ const { user, characters, initialPartySlots }  = loaderData;
         
         // Check for the specific party size error
         if (errorMessage.startsWith("not enough slots for this party:")) {
-            alert(`Join Failed: ${errorMessage}`);
+            showToast(`Join Failed: ${errorMessage}`, 'error');
         } else {
             // Handle other errors (Room not found, must select character, etc.)
-            alert(`Error: ${errorMessage}`);
+            showToast(`Error: ${errorMessage}`, 'error');
         }
     }
-  }, [fetcher.data]);
+  }, [fetcher.data, showToast]);
 
 
   const handleSlotChange = (slotIndex: number, newPlayerSlot: PlayerSlot) => {
@@ -230,6 +250,23 @@ const { user, characters, initialPartySlots }  = loaderData;
       return newSlots;
     });
   };
+
+  // Debounced version of handleSlotChange for server persistence
+  const debouncedHandleSlotChange = useMemo(
+    () => debounce(async (slotIndex: number, newPlayerSlot: PlayerSlot) => {
+      // Server persistence would happen here
+      // For now, this is just a placeholder for future API calls
+      logger.debug('Debounced slot change persisted', { slotIndex, newPlayerSlot });
+    }, 300),
+    []
+  );
+
+  // Cleanup debounced function on unmount
+  useEffect(() => {
+    return () => {
+      debouncedHandleSlotChange.cancel?.();
+    };
+  }, [debouncedHandleSlotChange]);
 
   // Readiness toggle handler (local state update only, persistence happens on room creation)
   const handleToggleReady = (slotIndex: number, isReady: boolean) => {
@@ -245,13 +282,13 @@ const { user, characters, initialPartySlots }  = loaderData;
   const handleEditCharacter = () => {
     // Editing characters should redirect back to the dashboard or open a modal here.
     // For simplicity, we'll redirect to the dashboard for character management.
-    alert("Character editing is managed on the Dashboard. Redirecting...");
+    showToast("Character editing is managed on the Dashboard. Redirecting...", 'info');
     navigate('/');
   };
 
   const handleDeleteCharacter = () => {
     // Deleting characters should also be managed on the dashboard.
-    alert("Character deletion is managed on the Dashboard.");
+    showToast("Character deletion is managed on the Dashboard.", 'info');
   };
 
   // --- UPDATED VALIDATION LOGIC for flexible hosting ---
@@ -275,7 +312,7 @@ const { user, characters, initialPartySlots }  = loaderData;
     if (!canCreateRoom) {
         e.preventDefault();
         // Updated message for flexible slot selection
-        alert("Please ensure at least one Human character is selected and ready, and all active slots (Human/AI) are marked as Ready.");
+        showToast("Please ensure at least one Human character is selected and ready, and all active slots (Human/AI) are marked as Ready.", "error");
         return;
     }
     
@@ -298,8 +335,32 @@ const { user, characters, initialPartySlots }  = loaderData;
 
       <h1 className="text-6xl font-medieval text-red-500 text-center mb-12">Room Selection</h1>
 
-      <div className="max-w-4xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="max-w-4xl mx-auto grid grid-cols-1 gap-8">
         
+        {/* Active Rooms List */}
+        <div className="bg-gray-800 p-6 rounded-xl shadow-2xl border border-gray-600">
+          <h2 className="text-3xl font-medieval text-red-400 mb-6">Active Lobbies ({activeRooms.length})</h2>
+          {activeRooms.length === 0 ? (
+            <p className="text-gray-400">No active rooms found. Be the first to create one!</p>
+          ) : (
+            <ul className="space-y-3">
+              {activeRooms.map(room => (
+                <li key={room.id} className="bg-gray-700 p-3 rounded flex justify-between items-center">
+                  <div>
+                    <p className="font-bold text-lg text-white">{room.name}</p>
+                    {/* Display host username instead of ID, and remove code display */}
+                    {/* FIX: Use optional chaining to prevent TypeError if hostUsernames is undefined during hydration */}
+                    <p className="text-sm text-gray-400">Host: {hostUsernames?.[room.host_id] || room.host_id}</p>
+                    {/* NEW: Display active slots count */}
+                    <p className="text-sm text-gray-400 mt-1">Active Slots: {room.activeSlotsCount}/{room.maxPlayers}</p>
+                  </div>
+                  {/* Join button here (requires character selection logic, omitted for now) */}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         {/* Room Creation Panel */}
         <div className="bg-gray-800 p-6 rounded-xl shadow-2xl border border-red-700">
           <h2 className="text-3xl font-medieval text-red-400 mb-6">Create New Room</h2>
@@ -336,6 +397,8 @@ const { user, characters, initialPartySlots }  = loaderData;
                         onToggleReady={handleToggleReady} // Local state update
                         showManagementButtons={false} // <-- CRITICAL: Hide Edit/Delete in Room Setup
                         currentUserId={user.id} // <-- Pass currentUserId for ownership detection
+                        maxPlayers={4} // Maximum players per room
+                        roomStatus="lobby" // Current room status
                     />
                 ))}
             </div>
@@ -383,30 +446,6 @@ const { user, characters, initialPartySlots }  = loaderData;
               Join Room
             </button>
           </Form>
-        </div>
-
-        {/* Active Rooms List */}
-        <div className="bg-gray-800 p-6 rounded-xl shadow-2xl border border-gray-600">
-          <h2 className="text-3xl font-medieval text-red-400 mb-6">Active Lobbies ({activeRooms.length})</h2>
-          {activeRooms.length === 0 ? (
-            <p className="text-gray-400">No active rooms found. Be the first to create one!</p>
-          ) : (
-            <ul className="space-y-3">
-              {activeRooms.map(room => (
-                <li key={room.id} className="bg-gray-700 p-3 rounded flex justify-between items-center">
-                  <div>
-                    <p className="font-bold text-lg text-white">{room.name}</p>
-                    {/* Display host username instead of ID, and remove code display */}
-                    {/* FIX: Use optional chaining to prevent TypeError if hostUsernames is undefined during hydration */}
-                    <p className="text-sm text-gray-400">Host: {hostUsernames?.[room.host_id] || room.host_id}</p>
-                    {/* NEW: Display active slots count */}
-                    <p className="text-sm text-gray-400 mt-1">Active Slots: {room.activeSlotsCount}/{room.maxPlayers}</p>
-                  </div>
-                  {/* Join button here (requires character selection logic, omitted for now) */}
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
       </div>
     </div>
