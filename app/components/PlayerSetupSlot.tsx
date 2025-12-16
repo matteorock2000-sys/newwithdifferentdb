@@ -406,7 +406,7 @@ export default function PlayerSetupSlot({
                 </div>
             )}
             <div className="flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-4">
-                <h3 className="text-xl sm:text-2xl font-bold text-center lg:text-left flex-1">
+                <h3 className="text-base sm:text-lg font-bold text-center lg:text-left flex-1">
                     Slot {slotIndex + 1} 
                     {isHostSlot && " (Host)"}
                     {isSlotLocked && " (Locked)"}
@@ -496,7 +496,7 @@ export default function PlayerSetupSlot({
                 </p>
             )}
             
-            <div className="mb-4">
+            <div className="mb-4 space-y-4">
                 <label className="block text-sm font-medium text-gray-300 mb-1">Slot Type</label>
                 <select
                     value={type}
@@ -590,25 +590,25 @@ export default function PlayerSetupSlot({
                                             <img 
                                                 src={selectedCharacter.avatarUrl} 
                                                 alt={`${selectedCharacter.name} portrait`}
-                                                className="w-20 h-20 md:w-28 md:h-28 lg:w-32 lg:h-32 aspect-square object-cover border-3 border-gray-500 rounded-lg shadow-lg"
+                                                className="w-16 h-16 object-cover rounded-md border-2 border-gray-500 shadow-md"
                                                 onError={() => setImageError(true)}
                                             />
                                         ) : (
-                                            <div className="fallback-avatar w-20 h-20 md:w-28 md:h-28 lg:w-32 lg:h-32 aspect-square border-3 border-gray-500 rounded-lg shadow-lg bg-gradient-to-br from-amber-500 via-orange-600 to-red-600 flex items-center justify-center text-white font-black text-3xl md:text-4xl lg:text-5xl ring-2 ring-amber-400/50 shadow-inner">
+                                            <div className="fallback-avatar w-16 h-16 aspect-square border-2 border-gray-500 rounded-md shadow-md bg-gradient-to-br from-amber-500 via-orange-600 to-red-600 flex items-center justify-center text-white font-black text-xl ring-1 ring-amber-400/50 shadow-inner">
                                                 {selectedCharacter.name.charAt(0).toUpperCase()}
                                             </div>
                                         )}
                                     </div>
 
                                     {/* Name and Badges */}
-                                    <div className="mt-2 space-y-2">
-                                        <p className="font-bold text-xl md:text-2xl text-yellow-300 truncate">{selectedCharacter.name}</p>
-                                        <div className="flex items-center justify-center space-x-2">
-                                            <span className="bg-blue-600 text-white text-xs px-2 py-1 rounded">
+                                    <div className="mt-2 space-y-1">
+                                        <p className="font-bold text-base text-yellow-300 truncate">{selectedCharacter.name}</p>
+                                        <div className="flex items-center justify-center space-x-1">
+                                            <span className="bg-blue-600 text-white text-xs px-1 py-0.5 rounded">
                                                 Lvl {selectedCharacter.level}
                                             </span>
                                             {selectedCharacter.alignment && (
-                                                <span className="bg-gray-600 text-gray-200 text-xs px-2 py-1 rounded">
+                                                <span className="bg-gray-600 text-gray-200 text-xs px-1 py-0.5 rounded">
                                                     {selectedCharacter.alignment}
                                                 </span>
                                             )}
@@ -617,12 +617,12 @@ export default function PlayerSetupSlot({
                                 </div>
                                 
                                 {/* MIDDLE SECTION: Race/Class + HP/AC */}
-                                <div className="w-full px-2 py-2 bg-gray-800 bg-opacity-50 rounded mb-3">
+                                <div className="w-full px-2 py-1 bg-gray-800 bg-opacity-50 rounded mb-1 text-sm">
                                     <div className="flex items-center justify-between">
-                                        <p className="text-gray-300 truncate text-sm">
+                                        <p className="text-gray-300 truncate text-xs">
                                             {selectedCharacter.race} {selectedCharacter.class}
                                         </p>
-                                        <div className="flex items-center space-x-3 text-sm">
+                                        <div className="flex items-center space-x-2 text-xs">
                                             <span className="text-green-400 font-semibold">HP: {selectedCharacter.hp}/{selectedCharacter.maxHp}</span>
                                             <span className="text-blue-400 font-semibold">AC: {selectedCharacter.ac}</span>
                                         </div>
@@ -630,10 +630,10 @@ export default function PlayerSetupSlot({
                                 </div>
                                 
                                 {/* BOTTOM SECTION: Stats Grid */}
-                                <div className="w-full">
+                                <div className="w-full text-xs">
                                     {/* Additional Stats Row */}
-                                    <div className="flex items-center justify-between mb-2 px-1">
-                                        <div className="flex items-center space-x-3 text-xs text-gray-400">
+                                    <div className="flex items-center justify-between mb-1 px-1">
+                                        <div className="flex items-center space-x-1 text-xs text-gray-400">
                                             <span>Init: {selectedCharacter.initiative > 0 ? '+' : ''}{selectedCharacter.initiative}</span>
                                             <span>PP: {selectedCharacter.passivePerception}</span>
                                             {selectedCharacter.background && (
@@ -646,65 +646,48 @@ export default function PlayerSetupSlot({
                                         
                                         {/* Primary Attribute */}
                                         {selectedCharacter.primaryAttribute && (
-                                            <span className="bg-purple-600 text-white text-xs px-2 py-1 rounded">
+                                            <span className="bg-purple-600 text-white text-xs px-1 py-0.5 rounded">
                                                 {selectedCharacter.primaryAttribute}
                                             </span>
                                         )}
                                     </div>
 
                                     {/* Quick Stats */}
-                                    <div className="grid grid-cols-6 gap-2">
-                                        <div className="text-center text-xs">
+                                    <div className="grid grid-cols-3 gap-1"> {/* Reduced to 3 columns to save space */}
+                                        <div className="text-center">
                                             <div className="text-gray-400">STR</div>
                                             <div className="text-white font-bold">
                                                 {selectedCharacter.stats?.strength || 10}
                                             </div>
                                         </div>
-                                        <div className="text-center text-xs">
+                                        <div className="text-center">
                                             <div className="text-gray-400">DEX</div>
                                             <div className="text-white font-bold">
                                                 {selectedCharacter.stats?.dexterity || 10}
                                             </div>
                                         </div>
-                                        <div className="text-center text-xs">
+                                        <div className="text-center">
                                             <div className="text-gray-400">CON</div>
                                             <div className="text-white font-bold">
                                                 {selectedCharacter.stats?.constitution || 10}
                                             </div>
                                         </div>
-                                        <div className="text-center text-xs">
-                                            <div className="text-gray-400">INT</div>
-                                            <div className="text-white font-bold">
-                                                {selectedCharacter.stats?.intelligence || 10}
-                                            </div>
-                                        </div>
-                                        <div className="text-center text-xs">
-                                            <div className="text-gray-400">WIS</div>
-                                            <div className="text-white font-bold">
-                                                {selectedCharacter.stats?.wisdom || 10}
-                                            </div>
-                                        </div>
-                                        <div className="text-center text-xs">
-                                            <div className="text-gray-400">CHA</div>
-                                            <div className="text-white font-bold">
-                                                {selectedCharacter.stats?.charisma || 10}
-                                            </div>
-                                        </div>
+                                        {/* Other stats moved to modal or simplified */}
                                     </div>
                                     
                                     {/* Equipment Preview */}
                                     {selectedCharacter.equipment && selectedCharacter.equipment.length > 0 && (
-                                        <div className="w-full mt-3 pt-3 border-t border-gray-700">
+                                        <div className="w-full mt-2 pt-2 border-t border-gray-700">
                                             <p className="text-xs text-gray-400 mb-1">Equipment:</p>
-                                            <div className="flex flex-wrap gap-1">
-                                                {selectedCharacter.equipment.slice(0, 4).map((item, index) => (
-                                                    <span key={index} className="bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded">
+                                            <div className="flex flex-wrap gap-0.5">
+                                                {selectedCharacter.equipment.slice(0, 2).map((item, index) => (
+                                                    <span key={index} className="bg-gray-700 text-gray-300 text-xs px-1 py-0.5 rounded">
                                                         {item}
                                                     </span>
                                                 ))}
-                                                {selectedCharacter.equipment.length > 4 && (
-                                                    <span className="bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded">
-                                                        +{selectedCharacter.equipment.length - 4} more
+                                                {selectedCharacter.equipment.length > 2 && (
+                                                    <span className="bg-gray-700 text-gray-300 text-xs px-1 py-0.5 rounded">
+                                                        +{selectedCharacter.equipment.length - 2} more
                                                     </span>
                                                 )}
                                             </div>
@@ -714,7 +697,7 @@ export default function PlayerSetupSlot({
                             </div>
                         </div>
                     ) : (
-                        <CharacterDisplayCard character={selectedCharacter} size="large" />
+                        <CharacterDisplayCard character={selectedCharacter} size="medium" />
                     )}
                     {/* Only show edit/delete buttons in dashboard (when not in lobby view) */}
                     {showManagementButtons && !isSlotLocked && !isLobbyView && (
