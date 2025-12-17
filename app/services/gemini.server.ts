@@ -100,7 +100,16 @@ function cleanText(text: string): string {
   return cleaned.trim();
 }
 
-export async function generateScenariosForCharacter(character: Character, duration: string, regenerationPrompt?: string, partyCharacters?: Character[], partySlots?: PlayerSlot[], roomCode?: string): Promise<AdventureScenario[]> {
+export async function generateScenariosForCharacter(
+  character: Character,
+  duration: string,
+  regenerationPrompt?: string,
+  partyCharacters?: Character[],
+  partySlots?: PlayerSlot[],
+  roomCode?: string,
+  forceNewGeneration?: boolean,
+  unique?: boolean
+): Promise<AdventureScenario[]> {
   console.log(`[GEMINI] Starting scenario generation for character: ${character.name}, room: ${roomCode}`);
 
   // Build party summary
@@ -133,6 +142,14 @@ export async function generateScenariosForCharacter(character: Character, durati
         `${i + 1}. Title: "${s.title}"\n   Environment: ${s.surrounding}\n   Objective: ${s.objective}`
       ).join('\n\n')}\n\nEnsure the new scenarios have different titles, environments, objectives, and core conflicts.`
     : '';
+
+  // Check cache first (unless forced or uniqueness requested)
+  const cacheKey = JSON.stringify({ characterId: character.id, duration, partyCharacters: partyCharacters?.map(c => c.id).sort(), regenerationPrompt: regenerationPrompt || '', roomCode: roomCode || '' });
+  const cached = scenarioCache.get(cacheKey);
+  if (!forceNewGeneration && !unique && cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    console.log(`[GEMINI] Returning cached scenarios for cache key: ${cacheKey.substring(0, 100)}...`);
+    return cached.scenarios as AdventureScenario[];
+  }
 
   const prompt = `
   You are an expert Dungeons & Dragons 5th Edition Dungeon Master AI, renowned for crafting innovative and engaging adventures. Your task is to generate exactly 4 distinct, compelling, and highly dynamic starting adventure scenarios for a D&D 5th Edition game.
@@ -521,8 +538,12 @@ export async function generateMapImage(scenario: AdventureScenario): Promise<str
   `;
 
   try {
-    const base64Image = await generateImageWithFreepik(positivePrompt, 'landscape_16_9');
-    logger.debug("Map image generation completed successfully.");
+    // Use same pattern as character portrait: request image URL with retries, then download as base64
+    const imageUrl = await generateImageWithFreepik(positivePrompt, 'landscape_16_9', 10, 2000);
+    logger.debug("Map image generation completed, image URL received.", { imageUrl });
+
+    const base64Image = await downloadImageAsBase64(imageUrl);
+    logger.debug("Map image downloaded and converted to base64 successfully.");
     return base64Image;
   } catch (error) {
     logger.error("Error generating map image with Freepik", { error: error instanceof Error ? error.message : "Unknown error" });

@@ -126,7 +126,16 @@ function generateFallbackScenarios(character: Character, duration: string, party
   throw new Error('OpenRouter API call failed. Please try again.');
 }
 
-export async function generateScenariosForCharacter(character: Character, duration: string, regenerationPrompt?: string, partyCharacters?: Character[], partySlots?: PlayerSlot[], roomCode?: string): Promise<AdventureScenario[]> {
+export async function generateScenariosForCharacter(
+  character: Character,
+  duration: string,
+  regenerationPrompt?: string,
+  partyCharacters?: Character[],
+  partySlots?: PlayerSlot[],
+  roomCode?: string,
+  forceNewGeneration?: boolean,
+  unique?: boolean
+): Promise<AdventureScenario[]> {
   console.log(`[OPENROUTER] Starting scenario generation for character: ${character.name}, room: ${roomCode}`);
 
   // Build cache key for this specific scenario generation request
@@ -139,9 +148,9 @@ export async function generateScenariosForCharacter(character: Character, durati
     roomCode: roomCode || ''
   });
 
-  // Check cache first (before checking database)
+  // Check cache first (before checking database) unless forced or uniqueness requested
   const cached = scenarioCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+  if (!forceNewGeneration && !unique && cached && Date.now() - cached.timestamp < CACHE_TTL) {
     console.log(`[OPENROUTER] Returning cached scenarios for cache key: ${cacheKey.substring(0, 100)}...`);
     return cached.scenarios;
   }

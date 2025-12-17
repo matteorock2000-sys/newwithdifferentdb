@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useFetcher } from '@remix-run/react';
+import { useFetcher, useNavigation } from '@remix-run/react';
 import type { Character, ScenarioForDisplay, PlayerSlot, AdventureScenario, DiceRollingState, ScenarioVote } from '~/types';
 import { useGlobalToast } from '~/utils/toast';
 import { subscribeToRoomChanges } from '~/services/realtime.client';
@@ -93,6 +93,7 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
   const fetcher = useFetcher<any>();
   const voteFetcher = useFetcher<any>();
   const scenarioFetcher = useFetcher<any>();
+  const navigation = useNavigation();
   const [selectedDuration, setSelectedDuration] = useState<string>('Short');
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [displayedScenarios, setDisplayedScenarios] = useState<ScenarioForDisplay[] | null>(scenarios);
@@ -738,17 +739,27 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
       return;
     }
 
-    // If roomCode is provided, submit to world-map route to update room status
+    console.log('[SCENARIO SELECTOR] handleSelectScenario called:', { 
+      scenarioId: scenario.id, 
+      scenarioTitle: scenario.title,
+      roomCode,
+      hasRoomCode: !!roomCode 
+    });
+
+    // If roomCode is provided, submit to game route to update room status and persist winner
     if (roomCode) {
+      console.log('[SCENARIO SELECTOR] Submitting scenario selection to /game for room:', roomCode);
       const formData = new FormData();
       formData.append('intent', 'startGame');
       formData.append('roomCode', roomCode);
       formData.append('selectedScenarioId', scenario.id);
-      scenarioFetcher.submit(formData, { method: 'post', action: '/world-map' });
+      setScenarioSelectionInProgress(true);
+      scenarioFetcher.submit(formData, { method: 'post', action: '/game' });
       return;
     }
 
     // Otherwise, use the original game route logic
+    console.log('[SCENARIO SELECTOR] Submitting scenario selection to /game (standalone)');
     const formData = new FormData();
     formData.append('intent', 'selectScenario');
     formData.append('activeCharacter', JSON.stringify(activeCharacter));
@@ -1209,20 +1220,56 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
       formData.append('roomCode', roomCode);
       // Add uniqueness parameter to ensure always unique scenarios
       formData.append('unique', 'true');
+      // Force generation to replace any existing scenarios
+      formData.append('forceNewGeneration', 'true');
       
       fetcher.submit(formData, { method: 'post', action: '/game' });
     }
   }, [regenerateMajority, isHost, roomCode, selectedDuration, activeCharacter, partyCharacters, partySlots, customPrompt]);
 
+  // Reset scenario selection flag when navigation begins (redirect happens)
+  useEffect(() => {
+    if (navigation.state !== 'idle') {
+      console.log('[SCENARIO SELECTOR] Navigation detected, clearing selection flags:', { navigationState: navigation.state });
+      setScenarioSelectionInProgress(false);
+      setDiceSelectionApplied(false);
+    }
+  }, [navigation.state]);
+
   // Handle scenario selection responses to redirect without refresh
   useEffect(() => {
     if (scenarioFetcher.data && scenarioFetcher.state === 'idle') {
-      if (scenarioFetcher.data.redirect) {
-        window.location.href = scenarioFetcher.data.redirect;
+      console.log('[SCENARIO SELECTOR] Fetcher response:', scenarioFetcher.data);
+      
+      if (scenarioFetcher.data.error) {
+        console.error('[SCENARIO SELECTOR] Scenario selection error:', scenarioFetcher.data.error);
+        // Extract error message - handle both string and object error formats
+        const errorMsg = typeof scenarioFetcher.data.error === 'string' 
+          ? scenarioFetcher.data.error 
+          : scenarioFetcher.data.error?.message || scenarioFetcher.data.error?.userMessage || 'Failed to save scenario selection';
+        showToast(errorMsg, 'error');
         setScenarioSelectionInProgress(false);
         setDiceSelectionApplied(false);
-      } else if (scenarioFetcher.data.error) {
-        showToast(scenarioFetcher.data.error, 'error');
+      } else if (scenarioFetcher.data && scenarioFetcher.data.success) {
+        // If server returned a success message without a redirect, show it
+        const msg = scenarioFetcher.data.message || 'Selected scenario saved as winner.';
+        console.log('[SCENARIO SELECTOR] Scenario selected successfully:', msg);
+        showToast(msg, 'success');
+        setScenarioSelectionInProgress(false);
+        setDiceSelectionApplied(false);
+      } else if (scenarioFetcher.data && scenarioFetcher.data.redirectTo) {
+        // Server instructs client to navigate to map-generation
+        const redirectUrl = scenarioFetcher.data.redirectTo;
+        console.log('[SCENARIO SELECTOR] Server requested redirect to:', redirectUrl);
+        showToast('🎉 Scenario winner saved! Proceeding to map generation...', 'success');
+        // Use full navigation to ensure loader runs
+        window.location.assign(redirectUrl);
+        return;
+      } else if (scenarioFetcher.data && !scenarioFetcher.data.error && !scenarioFetcher.data.success) {
+        // Server redirected (no JSON response body)
+        console.log('[SCENARIO SELECTOR] Server redirect detected (scenario saved and room updated)');
+        showToast('🎉 Scenario winner saved! Proceeding to map generation...', 'success');
+        // The redirect will happen automatically via Remix
         setScenarioSelectionInProgress(false);
         setDiceSelectionApplied(false);
       }
@@ -1589,22 +1636,26 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
 
   // Auto-submit scenario selection when dice roll is complete
   useEffect(() => {
-    console.log('Auto-submit check:', {
+    console.log('[SCENARIO SELECTOR] Auto-submit check:', {
       diceRollComplete,
       diceState: diceState ? diceState.status : 'null',
       totalActiveSlots,
-      diceRollsCount: Object.keys(diceRolls).length
+      diceRollsCount: Object.keys(diceRolls).length,
+      scenarioSelectionInProgress
     });
     
-    if (diceRollComplete && diceState && diceState.status === 'completed') {
-      console.log('Auto-submitting scenario selection');
+    if (diceRollComplete && diceState && diceState.status === 'completed' && !scenarioSelectionInProgress) {
+      console.log('[SCENARIO SELECTOR] Auto-submitting scenario selection from dice tiebreaker');
       const winningScenario = getWinningScenarioFromDiceRoll();
       if (winningScenario) {
+        console.log('[SCENARIO SELECTOR] Dice winner scenario:', { id: winningScenario.id, title: winningScenario.title });
         setAdventureStarted(true);
         handleSelectScenario(winningScenario);
+      } else {
+        console.warn('[SCENARIO SELECTOR] Could not determine winning scenario from dice roll');
       }
     }
-  }, [diceRollComplete, diceState, diceRolls, totalActiveSlots, getWinningScenarioFromDiceRoll, handleSelectScenario]);
+  }, [diceRollComplete, diceState, diceRolls, totalActiveSlots, getWinningScenarioFromDiceRoll, handleSelectScenario, scenarioSelectionInProgress]);
 
   // If countdown is showing, display countdown overlay
   if (showCountdown) {
@@ -1988,6 +2039,10 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                     }
                     // Add uniqueness parameter to ensure always unique scenarios
                     formData.append('unique', 'true');
+                    // Force generation to replace stored scenarios
+                    formData.append('forceNewGeneration', 'true');
+                    // Force generation to replace any existing scenarios
+                    formData.append('forceNewGeneration', 'true');
                     fetcher.submit(formData, { method: 'post', action: '/game' });
                   }}
                   disabled={isGenerating}
@@ -2133,29 +2188,21 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                             showToast('Scenario selection is already in progress.', 'info');
                             return;
                           }
-                          
+
                           const winningScenario = getWinningScenarioFromDiceRoll();
                           if (winningScenario) {
                             setAdventureStarted(true);
                             setScenarioSelectionInProgress(true);
                             handleSelectScenario(winningScenario);
                           } else {
+                            // No winner available — reset dice and allow manual selection
                             setDiceRolls({});
                             setDiceRollComplete(false);
                           }
                         }}
-                        className="bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded"
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-6 rounded-lg text-lg"
                       >
-                        Start Game Now
-                      </button>
-                      <button
-                        onClick={() => {
-                          setDiceRolls({});
-                          setDiceRollComplete(false);
-                        }}
-                        className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded"
-                      >
-                        Skip
+                        Next: Map Generation
                       </button>
                     </div>
                   </div>

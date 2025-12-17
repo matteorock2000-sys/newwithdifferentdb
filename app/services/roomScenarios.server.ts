@@ -260,33 +260,91 @@ export async function hasRoomScenarios(roomCode: string): Promise<boolean> {
  * @param scenarioId - The ID of the winning scenario.
  * @returns A promise that resolves when the winner is set.
  */
-export async function setRoomScenarioWinner(roomCode: string, scenarioId: string): Promise<void> {
+export async function setRoomScenarioWinner(roomCode: string, scenarioOrId: string | ScenarioForDisplay): Promise<void> {
+  const debugPrefix = `[setRoomScenarioWinner]`;
+  console.log(`${debugPrefix} START - room: ${roomCode}, scenario: ${typeof scenarioOrId === 'string' ? scenarioOrId : scenarioOrId?.id}`);
+  
   logger.debug(
-    `[roomScenarios.server] setRoomScenarioWinner: room ${roomCode}, winner ${scenarioId}`
+    `[roomScenarios.server] setRoomScenarioWinner: room ${roomCode}, winner ${typeof scenarioOrId === 'string' ? scenarioOrId : scenarioOrId?.id}`
   );
 
   try {
-    const { error } = await db
+    // Resolve full scenario object. If caller provided an ID (string), try to find the full scenario
+    let winnerObj: any = null;
+
+    if (typeof scenarioOrId === 'string') {
+      // Try to locate the scenario in the room's stored scenarios
+      try {
+        const room = await getRoomByCode(roomCode);
+        if (room && room.scenarios && Array.isArray(room.scenarios)) {
+          const found = room.scenarios.find((s: ScenarioForDisplay) => s.id === scenarioOrId);
+          if (found) {
+            winnerObj = found;
+          }
+        }
+      } catch (e) {
+        // Non-fatal; we'll fall back to storing the id if we can't fetch the room
+        logger.warn('[roomScenarios.server] Could not fetch room to resolve scenario id', { roomCode, scenarioId: scenarioOrId, error: e instanceof Error ? e.message : String(e) });
+      }
+
+      // If not found, store minimal object with id so the JSONB field still contains usable info
+      if (!winnerObj) {
+        winnerObj = { id: scenarioOrId };
+      }
+    } else {
+      // Caller provided full scenario object
+      winnerObj = scenarioOrId;
+    }
+
+    console.log(`${debugPrefix} Executing UPDATE query (storing JSONB scenario)...`);
+    const { error: updateError, count } = await db
       .from("rooms")
       .update({
-        scenario_winner_id: scenarioId,
+        scenario_winner_id: winnerObj,
         updated_at: new Date().toISOString(),
       })
       .eq("code", roomCode);
 
-    if (error) {
-      logger.error("[roomScenarios.server] Error setting room scenario winner:", {
+    console.log(`${debugPrefix} Query result - error: ${updateError?.message || 'none'}, count: ${count}`);
+
+    if (updateError) {
+      console.error(`${debugPrefix} Supabase error:`, updateError);
+      logger.error("[roomScenarios.server] Supabase error setting room scenario winner:", {
         roomCode,
-        scenarioId,
-        error,
+        winnerObj,
+        errorCode: updateError.code,
+        errorMessage: updateError.message,
+        errorDetails: updateError.details,
+        errorHint: updateError.hint,
       });
-      throw new Error("Failed to set room scenario winner");
+      throw new Error(`Failed to set room scenario winner: ${updateError.message}`);
     }
+
+    if (!count || count === 0) {
+      console.warn(`${debugPrefix} No rows updated - room may not exist or already has winner`);
+      logger.warn("[roomScenarios.server] No rows updated - room may not exist:", {
+        roomCode,
+        winnerObj,
+        affectedRows: count,
+      });
+      // Don't throw here - it's possible the room was just deleted
+    } else {
+      console.log(`${debugPrefix} SUCCESS - Updated ${count} row(s)`);
+      logger.info("[roomScenarios.server] Successfully updated scenario winner:", {
+        roomCode,
+        winnerObj,
+        affectedRows: count,
+      });
+    }
+
+    console.log(`${debugPrefix} COMPLETE`);
   } catch (error) {
+    console.error(`${debugPrefix} EXCEPTION:`, error);
     logger.error("[roomScenarios.server] Exception setting room scenario winner:", {
       roomCode,
-      scenarioId,
-      error,
+      winnerObj: typeof scenarioOrId === 'string' ? { id: scenarioOrId } : scenarioOrId,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      errorStack: error instanceof Error ? error.stack : undefined,
     });
     throw error;
   }
@@ -322,8 +380,13 @@ export async function getRoomScenarioWinner(roomCode: string): Promise<ScenarioF
       return null;
     }
 
+    const winnerRef = data.scenario_winner_id;
+    const winnerId = typeof winnerRef === 'string' ? winnerRef : winnerRef?.id;
+
+    if (!winnerId) return null;
+
     const winner = data.scenarios.find(
-      (scenario: ScenarioForDisplay) => scenario.id === data.scenario_winner_id
+      (scenario: ScenarioForDisplay) => scenario.id === winnerId
     );
     return winner || null;
   } catch (error) {

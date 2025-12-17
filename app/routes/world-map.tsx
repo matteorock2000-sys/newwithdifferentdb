@@ -13,6 +13,7 @@ import { getAllCharacters } from "~/services/characterCache.server";
 import { requireUserId } from "~/services/auth.server";
 import { setMapImage, getMapImage, deleteMapImage } from "~/services/mapCache.server"; // Import map cache functions
 import { getRoomByCode, updateRoomStatus } from "~/services/roomCore.server";
+import { setRoomScenarioWinner } from "~/services/roomScenarios.server";
 import { DND_5E_CHARACTERS } from "~/data/dnd";
 import CharacterDisplayCard from "~/components/CharacterDisplayCard";
 import ScenarioSelector from "~/components/ScenarioSelector";
@@ -61,61 +62,87 @@ export async function loader({ request }: LoaderFunctionArgs) {
         name: room.name,
         status: room.status,
         scenario_winner_id: room.scenario_winner_id,
-        scenarios_count: room.scenarios?.length || 0
+        scenarios_count: room.scenarios?.length || 0,
+        room_code: roomCode
     });
+    
+    // Normalize winner ref (may be stored as JSONB object or simple id)
+    const winnerRef = room.scenario_winner_id;
+    const winnerId = typeof winnerRef === 'string' ? winnerRef : winnerRef?.id;
 
-    // Ensure room is in active status (scenario already selected)
-    if (room.status !== 'active' && room.status !== 'active_game' && room.status !== 'scenario-selected') {
+    // Log the room status for debugging redirect loops
+    logger.debug(`[WORLD-MAP] Room ${roomCode} status: ${room.status}, scenario_winner_id: ${JSON.stringify(winnerRef)}`);
+
+    // Ensure room is in active status (scenario already selected) or map generation
+    if (room.status !== 'active' && room.status !== 'active_game' && room.status !== 'scenario-selected' && room.status !== 'map_generation') {
       if (room.status === 'lobby') {
+        logger.debug(`[WORLD-MAP] Room ${roomCode} is in lobby status, redirecting to game`);
         return redirect(`/game?roomCode=${roomCode}`);
       } else if (room.status === 'scenario_selection') {
+        logger.debug(`[WORLD-MAP] Room ${roomCode} is in scenario_selection status, redirecting to game`);
         return redirect(`/game?roomCode=${roomCode}`);
       } else if (room.status === 'finished') {
+        logger.debug(`[WORLD-MAP] Room ${roomCode} is finished, redirecting to game`);
         return redirect(`/game?roomCode=${roomCode}`);
       }
     }
     
-    // If room is in scenario-selected status, redirect to map generation
+    // If room is in scenario-selected status, redirect to world-map generation
     if (room.status === 'scenario-selected') {
-      return redirect(`/map?roomCode=${roomCode}`);
+      logger.debug(`[WORLD-MAP] Room ${roomCode} is in scenario-selected status, redirecting to world-map`);
+      return redirect(`/world-map?roomCode=${roomCode}`);
+    }
+    
+    // If room is in 'active' status but has a scenario_winner_id, proceed to map generation
+    if (room.status === 'active' && winnerId) {
+      logger.debug(`[WORLD-MAP] Room ${roomCode} is active with scenario winner, proceeding to map generation`);
     }
 
     // Check if current user is the host
     const isHost = room.owner_id === userId || room.host_id === userId;
 
     // Get the selected scenario from the room
-    logger.debug(`[WORLD-MAP] Room status: ${room.status}, scenario_winner_id: ${room.scenario_winner_id}`);
+    logger.debug(`[WORLD-MAP] Room status: ${room.status}, scenario_winner_id: ${JSON.stringify(winnerRef)}`);
     logger.debug(`[WORLD-MAP] Available scenarios count: ${room.scenarios?.length || 0}`);
     logger.debug(`[WORLD-MAP] Available scenarios:`, { scenarios: room.scenarios?.map(s => ({ id: s.id, title: s.title })) });
     
     // Debug: Check if scenario_winner_id matches any scenario ID
-    if (room.scenarios && room.scenario_winner_id) {
-      logger.debug(`[WORLD-MAP] Looking for scenario with ID: ${room.scenario_winner_id}`);
+    if (room.scenarios && winnerId) {
+      logger.debug(`[WORLD-MAP] Looking for scenario with ID: ${winnerId}`);
       room.scenarios.forEach((s, index) => {
-        logger.debug(`[WORLD-MAP] Scenario ${index}: ID=${s.id}, Title=${s.title}, Match=${s.id === room.scenario_winner_id}`);
+        logger.debug(`[WORLD-MAP] Scenario ${index}: ID=${s.id}, Title=${s.title}, Match=${s.id === winnerId}`);
       });
+      
+      // Try to find the scenario
+      const foundScenario = room.scenarios.find(s => s.id === winnerId);
+      if (foundScenario) {
+        logger.debug(`[WORLD-MAP] Found scenario: ${foundScenario.title}`);
+      } else {
+        logger.debug(`[WORLD-MAP] Scenario not found in room.scenarios array`);
+      }
+    } else {
+      logger.debug(`[WORLD-MAP] No scenario_winner_id or no scenarios in room`);
     }
     
-    const scenario = room.scenarios?.find(s => s.id === room.scenario_winner_id) || null; // Explicitly allow null
+    const scenario = room.scenarios?.find(s => s.id === winnerId) || null; // Explicitly allow null
 
     if (!scenario) {
-      logger.debug(`[WORLD-MAP] Scenario not found, scenario_winner_id: ${room.scenario_winner_id}`);
+      logger.debug(`[WORLD-MAP] Scenario not found, scenario_winner_id: ${JSON.stringify(winnerRef)}`);
       logger.debug(`[WORLD-MAP] Checking if scenario_winner_id exists in scenarios...`);
-      if (room.scenarios && room.scenario_winner_id) {
-        const found = room.scenarios.some(s => s.id === room.scenario_winner_id);
+      if (room.scenarios && winnerId) {
+        const found = room.scenarios.some(s => s.id === winnerId);
         logger.debug(`[WORLD-MAP] Scenario ID found in scenarios: ${found}`);
       }
       
       // Check if there are dice results that can help determine the winner
       const diceResults = session.get("diceResults");
       if (diceResults && Object.keys(diceResults).length > 0) {
-        logger.debug(`[WORLD-MAP] Found dice results in session, checking if we can determine scenario winner...`);
-        
-        // For now, we'll show the world-map with the dice results and let the host select the scenario
-        // This is a temporary solution until we implement proper scenario winner determination from dice results
-        logger.debug(`[WORLD-MAP] Showing world-map with dice results for manual scenario selection`);
+        logger.debug(`[WORLD-MAP] Found dice results in session, showing world-map for manual scenario selection`);
+        // Show the world-map with dice results for manual scenario selection
+        // Don't redirect - let the user select a scenario manually
       } else {
-        logger.debug(`[WORLD-MAP] No dice results found, redirecting to game`);
+        logger.debug(`[WORLD-MAP] No dice results found and no scenario, redirecting to game`);
+        // Only redirect if we don't have dice results to work with
         return redirect(`/game?roomCode=${roomCode}`);
       }
     }
@@ -249,16 +276,46 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     try {
-      // Update room status to active_game
-      const statusUpdated = await updateRoomStatus(roomCode, 'active_game');
-      if (statusUpdated) {
-        logger.debug(`[WORLD-MAP ACTION] Room ${roomCode} status updated to 'active_game'`);
-      } else {
-        logger.warn(`[WORLD-MAP ACTION] Failed to update room ${roomCode} status`);
+      // If a selectedScenarioId was provided (e.g., dice tiebreaker), persist it as the room winner
+      const selectedScenarioId = formData.get('selectedScenarioId')?.toString();
+      if (selectedScenarioId) {
+        try {
+          await setRoomScenarioWinner(roomCode, selectedScenarioId);
+          logger.debug(`[WORLD-MAP ACTION] Persisted selectedScenarioId ${selectedScenarioId} for room ${roomCode}`);
+        } catch (err) {
+          logger.error(`[WORLD-MAP ACTION] Failed to persist selectedScenarioId ${selectedScenarioId}`, { err: err instanceof Error ? err.message : err });
+        }
       }
 
-      // Redirect to game with roomCode
-      return redirect(`/game?roomCode=${roomCode}`, {
+        // Update room status to map_generation
+        let statusUpdated = await updateRoomStatus(roomCode, 'map_generation');
+        if (statusUpdated) {
+          logger.debug(`[WORLD-MAP ACTION] Room ${roomCode} status updated to 'map_generation'`);
+        } else {
+          logger.warn(`[WORLD-MAP ACTION] First attempt to update room ${roomCode} status failed, retrying once`);
+          // Retry once
+          statusUpdated = await updateRoomStatus(roomCode, 'map_generation');
+          if (statusUpdated) {
+            logger.debug(`[WORLD-MAP ACTION] Retry succeeded updating room ${roomCode} status to 'map_generation'`);
+          } else {
+            logger.error(`[WORLD-MAP ACTION] Failed to update room ${roomCode} status after retry`);
+          }
+        }
+
+        // Fetch room to verify persisted status and log it for debugging
+        try {
+          const roomAfter = await getRoomByCode(roomCode);
+          logger.debug(`[WORLD-MAP ACTION] Room status after update attempt:`, { roomCode, status: roomAfter?.status, scenario_winner_id: roomAfter?.scenario_winner_id });
+          if (roomAfter?.status !== 'map_generation') {
+            logger.warn(`[WORLD-MAP ACTION] Room ${roomCode} status is '${roomAfter?.status}' after update; this may cause redirects back to lobby`);
+          }
+        } catch (err) {
+          logger.error(`[WORLD-MAP ACTION] Failed to fetch room after status update:`, { roomCode, err });
+        }
+
+      // Redirect to world-map with roomCode to show the map generation page
+      logger.info(`[WORLD-MAP ACTION] Redirecting to map generation page:`, { roomCode, scenario_winner_id: selectedScenarioId });
+      return redirect(`/world-map?roomCode=${roomCode}`, {
         headers: { "Set-Cookie": await commitSession(cleanupSession(session)) }
       });
     } catch (error) {
@@ -796,44 +853,59 @@ export default function WorldMap() {
             </>
           )}
           
+          {/* Active Slots Count Indicator */}
+          <div className="mb-6">
+            <div className="bg-purple-600 text-white px-4 py-2 rounded-lg inline-flex items-center space-x-2">
+              <span className="text-sm font-semibold">👥</span>
+              <span className="text-lg font-bold">{activeParty.length}</span>
+              <span className="text-sm">Active Adventurers</span>
+            </div>
+          </div>
+
+          {/* Scenario Details Section */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          
           {/* Environment Card */}
-          <div className="mb-4 p-4 bg-gray-800 rounded-lg border border-yellow-600">
+          <div className="p-4 bg-gray-800 rounded-lg border border-yellow-600 hover:border-yellow-500 transition-colors">
             <h3 className="text-lg font-semibold text-yellow-400 mb-2">🌍 Environment</h3>
-            <p className="text-gray-300">{scenario?.surrounding}</p> {/* Optional chaining */}
+            <p className="text-gray-300 text-sm leading-relaxed">{scenario?.surrounding}</p>
           </div>
 
           {/* Objective Card */}
-          <div className="mb-4 p-4 bg-gray-800 rounded-lg border border-red-600">
+          <div className="p-4 bg-gray-800 rounded-lg border border-red-600 hover:border-red-500 transition-colors">
             <h3 className="text-lg font-semibold text-red-400 mb-2">🎯 Objective</h3>
-            <p className="text-gray-300">{scenario?.objective}</p> {/* Optional chaining */}
+            <p className="text-gray-300 text-sm leading-relaxed">{scenario?.objective}</p>
+          </div>
           </div>
 
           {/* Map Description Section */}
           {scenario?.mapDescription && (
-            <div className="mb-4 p-4 bg-gray-800 rounded-lg border border-blue-600">
-              <div className="flex items-center justify-between mb-2">
+            <div className="mb-6 p-4 bg-gray-800 rounded-lg border border-blue-600 hover:border-blue-500 transition-colors">
+              <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-semibold text-blue-400">🗺️ Map Description</h3>
                 <button
                   onClick={() => toggleSection('mapDescription')}
-                  className="text-blue-300 hover:text-blue-100"
+                  className="text-blue-300 hover:text-blue-100 transition-colors"
                 >
                   {expandedSections.mapDescription ? '▼ Hide' : '▶ Show'}
                 </button>
               </div>
               {expandedSections.mapDescription && (
-                <p className="text-gray-300">{scenario.mapDescription}</p>
+                <div className="text-gray-300 text-sm leading-relaxed">
+                  {scenario.mapDescription}
+                </div>
               )}
             </div>
           )}
 
           {/* Encounters Section */}
           {scenario?.possibleEncounters && scenario.possibleEncounters.length > 0 && (
-            <div className="mb-4 p-4 bg-gray-800 rounded-lg border border-purple-600">
-              <div className="flex items-center justify-between mb-2">
+            <div className="mb-6 p-4 bg-gray-800 rounded-lg border border-purple-600 hover:border-purple-500 transition-colors">
+              <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-semibold text-purple-400">⚔️ Possible Encounters</h3>
                 <button
                   onClick={() => toggleSection('encounters')}
-                  className="text-purple-300 hover:text-purple-100"
+                  className="text-purple-300 hover:text-purple-100 transition-colors"
                 >
                   {expandedSections.encounters ? '▼ Hide' : `▶ Show (${scenario.possibleEncounters.length})`}
                 </button>
@@ -841,7 +913,7 @@ export default function WorldMap() {
               {expandedSections.encounters && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {scenario.possibleEncounters.map((encounter, index) => (
-                    <span key={index} className="inline-block bg-purple-900/50 text-purple-300 px-3 py-1 rounded-full text-sm">
+                    <span key={index} className="inline-block bg-purple-900/50 text-purple-300 px-3 py-1 rounded-full text-sm hover:bg-purple-900/70 transition-colors">
                       {encounter}
                     </span>
                   ))}
@@ -852,12 +924,12 @@ export default function WorldMap() {
 
           {/* Enemies Section */}
           {scenario?.possibleEnemies && scenario.possibleEnemies.length > 0 && (
-            <div className="mb-4 p-4 bg-gray-800 rounded-lg border border-orange-600">
-              <div className="flex items-center justify-between mb-2">
+            <div className="mb-6 p-4 bg-gray-800 rounded-lg border border-orange-600 hover:border-orange-500 transition-colors">
+              <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-semibold text-orange-400">👹 Possible Enemies</h3>
                 <button
                   onClick={() => toggleSection('enemies')}
-                  className="text-orange-300 hover:text-orange-100"
+                  className="text-orange-300 hover:text-orange-100 transition-colors"
                 >
                   {expandedSections.enemies ? '▼ Hide' : `▶ Show (${scenario.possibleEnemies.length})`}
                 </button>
@@ -865,7 +937,7 @@ export default function WorldMap() {
               {expandedSections.enemies && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {scenario.possibleEnemies.map((enemy, index) => (
-                    <span key={index} className="inline-block bg-orange-900/50 text-orange-300 px-3 py-1 rounded-full text-sm">
+                    <span key={index} className="inline-block bg-orange-900/50 text-orange-300 px-3 py-1 rounded-full text-sm hover:bg-orange-900/70 transition-colors">
                       {enemy}
                     </span>
                   ))}
@@ -876,11 +948,14 @@ export default function WorldMap() {
 
           {/* Boss Fight Section */}
           {scenario?.bossFight && (
-            <div className="mb-4 p-4 bg-gray-800 rounded-lg border border-red-700">
-              <h3 className="text-lg font-semibold text-red-500 mb-2">💀 Boss Fight</h3>
-              <div className="bg-red-900/30 p-3 rounded border border-red-600">
-                <p className="text-red-300 font-semibold">{scenario.bossFight.name}</p>
-                <p className="text-red-200 text-sm">{scenario.bossFight.description}</p>
+            <div className="mb-6 p-4 bg-gray-800 rounded-lg border border-red-700 hover:border-red-600 transition-colors">
+              <h3 className="text-lg font-semibold text-red-500 mb-3">💀 Boss Fight</h3>
+              <div className="bg-red-900/30 p-4 rounded border border-red-600">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-red-300 font-semibold text-lg">{scenario.bossFight.name}</p>
+                  <span className="bg-red-600 text-white px-2 py-1 rounded-full text-xs font-semibold">BOSS</span>
+                </div>
+                <p className="text-red-200 text-sm leading-relaxed">{scenario.bossFight.description}</p>
               </div>
             </div>
           )}
@@ -928,9 +1003,16 @@ export default function WorldMap() {
                 name="intent"
                 value="generateMap"
                 disabled={isGeneratingMapLocal}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg text-lg font-medieval transition duration-300 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-lg text-2xl font-medieval transition duration-300 disabled:bg-gray-500 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transform hover:scale-105 animate-pulse"
               >
-                {isGeneratingMapLocal ? "Generating Map..." : "Generate Map"}
+                {isGeneratingMapLocal ? (
+                  <span className="flex items-center justify-center space-x-3">
+                    <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin"></div>
+                    <span>Generating Map...</span>
+                  </span>
+                ) : (
+                  '🗺️ Generate Map'
+                )}
               </button>
             </Form>
           )}
@@ -971,10 +1053,10 @@ export default function WorldMap() {
                       {isGeneratingMap ? (
                         <span className="flex items-center justify-center space-x-2">
                           <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                          <span>Generating...</span>
+                          <span>Regenerating...</span>
                         </span>
                       ) : (
-                        'Regenerate Map'
+                        '🔄 Regenerate Map'
                       )}
                     </button>
                   </Form>
@@ -997,7 +1079,7 @@ export default function WorldMap() {
                         <span>Generating...</span>
                       </span>
                     ) : (
-                      'Generate Map'
+                      '🗺️ Generate Map'
                     )}
                   </button>
                 </Form>
@@ -1012,47 +1094,77 @@ export default function WorldMap() {
         {/* Right Column: Party & Next Button */}
         <div className="lg:col-span-1">
           <h2 className="text-3xl font-medieval text-yellow-300 mb-4">Your Party</h2>
-          <div className="space-y-3">
-            {party?.map((p, index) => { // Optional chaining
+          <div className="space-y-4">
+            {activeParty.map((p, index) => {
               const slot = p.slot;
               const character = p.character;
               
               return (
-                <div key={slot.characterId || index} className="bg-gray-800/50 rounded-lg p-3 border border-gray-700">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center">
-                        <span className="text-sm font-semibold">
-                          {character ? character.name.charAt(0) : slot.type.charAt(0)}
-                        </span>
+                <div key={slot.characterId || index} className={`bg-gradient-to-br ${slot.type === 'Human' ? 'from-blue-900/50 to-blue-800/30 border-blue-500' : 'from-green-900/50 to-green-800/30 border-green-500'} rounded-lg p-4 border-2 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105`}>
+                  <div className="flex items-start justify-between">
+                    {/* Left Section: Avatar and Info */}
+                    <div className="flex items-start space-x-4">
+                      {/* Character Avatar */}
+                      <div className={`w-16 h-16 ${slot.type === 'Human' ? 'bg-blue-600' : 'bg-green-600'} rounded-xl flex items-center justify-center text-2xl font-bold shadow-lg`}>
+                        {character?.avatarUrl ? (
+                          <img src={character.avatarUrl} alt={character.name} className="w-full h-full rounded-xl object-cover" />
+                        ) : (
+                          <span>{character ? character.name.charAt(0).toUpperCase() : slot.type.charAt(0)}</span>
+                        )}
                       </div>
-                      <div>
-                        <div className="font-semibold">
-                          {character ? character.name : slot.type}
+                      
+                      {/* Character Info */}
+                      <div className="space-y-1">
+                        <div className="flex items-center space-x-3">
+                          <h3 className="text-xl font-bold text-white">{character ? character.name : slot.type}</h3>
+                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                            slot.type === 'Human' ? 'bg-blue-600 text-white' : 'bg-green-600 text-white'
+                          }`}>
+                            {slot.type === 'Human' ? '👤 Human Player' : '🤖 AI Companion'}
+                          </span>
                         </div>
-                        <div className="text-sm text-gray-400">
-                          {slot.userId ? `Player: ${slot.userId.substring(0, 8)}` : 'No player assigned'}
+                        <div className="text-gray-300 text-sm">
+                          {character ? `${character.race} ${character.class}` : 'No character assigned'}
                         </div>
+                        {character && (
+                          <div className="text-gray-400 text-sm">
+                            Level {character.level} • HP {character.hp}/{character.maxHp} • AC {character.ac}
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className={`px-2 py-1 rounded text-xs font-semibold ${
-                        slot.type === 'Human' ? 'bg-blue-600 text-white' :
-                        slot.type === 'AI' ? 'bg-green-600 text-white' :
-                        'bg-gray-600 text-white'
-                      }`}>
-                        {slot.type}
+                    
+                    {/* Right Section: Stats Grid */}
+                    {character && (
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        <div className="bg-black/30 rounded-lg p-2 text-center">
+                          <div className="text-xs text-gray-400">HP</div>
+                          <div className="text-lg font-bold text-green-400">{character.hp}/{character.maxHp}</div>
+                        </div>
+                        <div className="bg-black/30 rounded-lg p-2 text-center">
+                          <div className="text-xs text-gray-400">AC</div>
+                          <div className="text-lg font-bold text-blue-400">{character.ac}</div>
+                        </div>
+                        <div className="bg-black/30 rounded-lg p-2 text-center">
+                          <div className="text-xs text-gray-400">Init</div>
+                          <div className="text-lg font-bold text-purple-400">{character.initiative}</div>
+                        </div>
+                        <div className="bg-black/30 rounded-lg p-2 text-center">
+                          <div className="text-xs text-gray-400">PP</div>
+                          <div className="text-lg font-bold text-yellow-400">{character.passivePerception}</div>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
 
                   {/* Username Badge for Human Slots */}
                   {slot.type === 'Human' && slot.username && (
-                    <div className="flex items-center justify-between pt-2 border-t border-gray-700">
-                      <span className="bg-blue-900/50 text-blue-300 px-3 py-1 rounded-full text-sm">
-                        👤 {slot.username}
+                    <div className="mt-3 flex items-center justify-between pt-3 border-t border-white/20">
+                      <span className="bg-blue-900/50 text-blue-300 px-3 py-2 rounded-full text-sm font-semibold flex items-center space-x-2">
+                        <span>👤</span>
+                        <span>{slot.username}</span>
                       </span>
-                      <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                      <span className={`px-3 py-2 rounded-full text-sm font-semibold ${
                         slot.isReady ? 'bg-green-600 text-white' : 'bg-gray-600 text-gray-300'
                       }`}>
                         {slot.isReady ? 'Ready' : 'Not Ready'}
@@ -1064,20 +1176,20 @@ export default function WorldMap() {
             })}
             
             {/* Party Composition Summary */}
-            <div className="mt-6 p-4 bg-gray-800 rounded-lg border border-purple-600">
+            <div className="mt-6 p-4 bg-gray-800 rounded-lg border border-purple-600 hover:border-purple-500 transition-colors">
               <h4 className="text-lg font-semibold text-purple-400 mb-3">👥 Party Composition</h4>
               <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <span className="bg-blue-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
+                <div className="flex items-center space-x-3">
+                  <span className="bg-blue-600 text-white px-3 py-2 rounded-full text-sm font-semibold">
                     👤 {humanCount} Human Players
                   </span>
-                  <span className="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
+                  <span className="bg-green-600 text-white px-3 py-2 rounded-full text-sm font-semibold">
                     🤖 {aiCount} AI Companions
                   </span>
                 </div>
                 <div className="text-right">
                   <div className="text-sm text-gray-400">Total Adventurers</div>
-                  <div className="text-2xl font-bold text-white">
+                  <div className="text-3xl font-bold text-white">
                     {activeParty.length}
                   </div>
                 </div>
@@ -1087,8 +1199,8 @@ export default function WorldMap() {
           
           {/* Host Controls */}
           {isHost && (
-            <div className="mt-6 space-y-3">
-              <h3 className="text-xl font-medieval text-yellow-300">Host Controls</h3>
+            <div className="mt-6 space-y-4">
+              <h3 className="text-2xl font-medieval text-yellow-300">Host Controls</h3>
               <Form method="post">
                 <input type="hidden" name="roomCode" value={roomCode} />
                 <button
@@ -1096,9 +1208,16 @@ export default function WorldMap() {
                   name="intent"
                   value="startGame"
                   disabled={isStarting || isGeneratingMap}
-                  className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg text-lg font-medieval transition duration-300 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                  className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 px-6 rounded-lg text-xl font-medieval transition duration-300 disabled:bg-gray-500 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transform hover:scale-105"
                 >
-                  {isStarting ? "Starting..." : "Start Game"}
+                  {isStarting ? (
+                    <span className="flex items-center justify-center space-x-3">
+                      <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Starting Game...</span>
+                    </span>
+                  ) : (
+                    'Start Game'
+                  )}
                 </button>
               </Form>
             </div>
@@ -1126,8 +1245,8 @@ export default function WorldMap() {
             
             {/* Helper text for map requirement */}
             {!mapImageBase64 && (
-              <p className="text-yellow-300 text-sm mt-2 text-center">
-                Note: Map generation is optional but recommended for the best experience
+              <p className="text-yellow-300 text-sm mt-3 text-center bg-yellow-900/30 rounded-lg p-3 border border-yellow-600">
+                🗺️ Map not generated - you can still proceed, but generating a map provides the best adventure experience
               </p>
             )}
           </Form>

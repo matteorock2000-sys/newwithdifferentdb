@@ -423,20 +423,26 @@ export async function deleteRoom(roomCode: string, userId: string): Promise<void
 /**
  * Updates the status of a room.
  */
-export async function updateRoomStatus(roomCode: string, newStatus: 'lobby' | 'scenario_selection' | 'scenario-selected' | 'active_game' | 'finished'): Promise<boolean> {
+export async function updateRoomStatus(roomCode: string, newStatus: 'lobby' | 'scenario_selection' | 'scenario-selected' | 'active_game' | 'map_generation' | 'finished'): Promise<boolean> {
     logger.debug(`[roomCore.server] updateRoomStatus: ${roomCode} to ${newStatus}`);
-    
-    const { data, error } = await db.from("rooms").update({
-        status: newStatus,
-        updated_at: new Date().toISOString()
-    }).eq("code", roomCode).select().single();
-    
-    if (error) {
-        logger.error(`[roomCore.server] Error updating room status:`, { roomCode, newStatus, error });
+
+    try {
+        const { data, error } = await db.from("rooms").update({
+            status: newStatus,
+            updated_at: new Date().toISOString()
+        }).eq("code", roomCode).select().single();
+
+        if (error) {
+            logger.error(`[roomCore.server] Error updating room status:`, { roomCode, newStatus, error });
+            return false;
+        }
+
+        logger.debug(`[roomCore.server] updateRoomStatus: DB returned`, { roomCode, status: data?.status });
+        return true;
+    } catch (err) {
+        logger.error(`[roomCore.server] Exception updating room status:`, { roomCode, newStatus, err });
         return false;
     }
-    
-    return true;
 }
 
 /**

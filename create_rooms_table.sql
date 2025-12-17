@@ -1,6 +1,9 @@
 -- Add scenarios column to rooms table
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS scenarios JSONB;
 
+-- Add scenario_winner_id column to rooms table (store selected scenario id)
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS scenario_winner_id VARCHAR(255);
+
 -- Create a table to track scenario votes in rooms
 CREATE TABLE room_scenario_votes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

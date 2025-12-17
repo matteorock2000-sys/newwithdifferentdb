@@ -200,7 +200,7 @@ export interface DBRoom {
     room_chat_last_updated?: string; // ADDED: Timestamp of last chat update for real-time
     scenarios?: ScenarioForDisplay[];
     dice_rolling_state?: DiceRollingState | null;
-    scenario_winner_id?: string | null; // ADDED: Scenario winner ID field
+    scenario_winner_id?: string | ScenarioForDisplay | null; // ADDED: Scenario winner stored as JSONB (object) or id
 }
 
 export interface Room {
@@ -220,7 +220,7 @@ export interface Room {
   room_chat_last_updated?: string; // ADDED: Timestamp of last chat update for real-time
   scenarios?: ScenarioForDisplay[];
   dice_rolling_state?: DiceRollingState | null;
-  scenario_winner_id?: string | null;
+  scenario_winner_id?: string | ScenarioForDisplay | null;
 }
 
 export interface DiceRollingState {

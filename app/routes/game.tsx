@@ -177,8 +177,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
             }
 
             // Check room status and redirect accordingly
-            if (room.status === 'active_game' || room.status === 'scenario-selected') {
-                // Room is in active game mode or scenario selected - redirect to world-map
+            if (room.status === 'active_game') {
+                // Room is in active game mode - redirect to world-map
+                console.log(`[REDIRECT] Room ${roomCode} is in ${room.status} status, redirecting to world-map`);
+                return redirect(`/world-map?roomCode=${roomCode}`);
+            } else if (room.status === 'scenario-selected') {
+                // Room is in scenario selected status - redirect to world-map
                 console.log(`[REDIRECT] Room ${roomCode} is in ${room.status} status, redirecting to world-map`);
                 return redirect(`/world-map?roomCode=${roomCode}`);
             } else if (room.status === 'scenario_selection') {
@@ -188,6 +192,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
             } else if (room.status === 'lobby') {
                 // Room is in lobby mode - stay in game route for setup
                 console.log(`[GAME ROUTE] Room ${roomCode} is in lobby status, showing setup interface`);
+            } else if (room.status === 'active' && room.scenario_winner_id) {
+                // Room is active with a scenario winner - redirect to world-map
+                console.log(`[REDIRECT] Room ${roomCode} is active with scenario winner, redirecting to world-map`);
+                return redirect(`/world-map?roomCode=${roomCode}`);
             } else {
                 console.warn(`[GAME LOADER] Room ${roomCode} has an unknown status: ${room.status}. Defaulting to lobby.`);
                 // Fallback for unknown status - continue to lobby setup
@@ -578,6 +586,7 @@ export async function action({ request }: ActionFunctionArgs) {
         const regenerationPromptStr = formData.get('regenerationPrompt')?.toString();
         const roomCode = formData.get('roomCode')?.toString();
         const forceNewGeneration = formData.get('forceNewGeneration') === 'true';
+        const unique = formData.get('unique') === 'true';
 
         if (!activeCharacterStr) {
             return createApiErrorResponse(new Error("Missing active character data."), "Missing active character data");
@@ -624,7 +633,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
             // Wrap scenario generation with retry logic
             const scenarios = await retryOperation(
-                () => generateScenariosForCharacter(activeCharacter, durationStr, regenerationPromptStr, partyCharacters, partySlots, roomCode),
+                () => generateScenariosForCharacter(activeCharacter, durationStr, regenerationPromptStr, partyCharacters, partySlots, roomCode, forceNewGeneration, unique),
                 {
                     maxAttempts: 3,
                     delayMs: 2000,
@@ -790,6 +799,113 @@ export async function action({ request }: ActionFunctionArgs) {
         } catch (error) {
             console.error("Error retracting vote:", error);
             return json({ error: "Failed to retract vote." }, { status: 500 });
+        }
+    }
+
+    if (intent === 'startGame') {
+        const roomCode = formData.get('roomCode')?.toString();
+        const selectedScenarioId = formData.get('selectedScenarioId')?.toString();
+
+        logger.debug('[GAME ACTION] startGame intent received', {
+            roomCode,
+            selectedScenarioId
+        });
+
+        if (!roomCode || !selectedScenarioId) {
+            logger.error('[GAME ACTION] Missing required data for startGame', {
+                roomCode,
+                selectedScenarioId
+            });
+            return json(
+                { error: "Missing room code or scenario ID" },
+                { status: 400 }
+            );
+        }
+
+        // Accept either a scenario ID string or a full scenario object (stringified JSON).
+        // Resolution to full scenario will happen in the service layer; no strict UUID validation here.
+
+        try {
+            // Step 1: Persist the winning scenario
+            logger.debug('[GAME ACTION] Persisting scenario winner', {
+                roomCode,
+                selectedScenarioId,
+                userId
+            });
+
+            try {
+                await setRoomScenarioWinner(roomCode, selectedScenarioId);
+                logger.info('[GAME ACTION] Scenario winner persisted successfully', {
+                    roomCode,
+                    selectedScenarioId
+                });
+            } catch (err) {
+                const errorMsg = err instanceof Error ? err.message : String(err);
+                logger.error('[GAME ACTION] Failed to persist scenario winner - throwing error back to client', {
+                    roomCode,
+                    selectedScenarioId,
+                    errorMessage: errorMsg,
+                    errorStack: err instanceof Error ? err.stack : undefined
+                });
+                throw err; // Re-throw to outer catch
+            }
+
+            // Step 2: Update room status to map_generation
+            logger.debug('[GAME ACTION] Updating room status to map_generation', { roomCode });
+
+            const statusUpdated = await retryOperation(
+                () => updateRoomStatus(roomCode, 'map_generation'),
+                {
+                    maxAttempts: 3,
+                    delayMs: 500,
+                    maxDelayMs: 2000,
+                    shouldRetry: (error) => {
+                        const msg = error?.message || '';
+                        return msg.includes("Failed to update") || 
+                               msg.includes("constraint") ||
+                               msg.includes("transaction");
+                    },
+                    onRetry: (error, attempt) => {
+                        logger.info('[GAME ACTION] Retrying room status update', {
+                            roomCode,
+                            attempt,
+                            error: error?.message
+                        });
+                    }
+                }
+            );
+
+            if (!statusUpdated) {
+                logger.error('[GAME ACTION] Failed to update room status after retries - throwing error back to client', {
+                    roomCode,
+                    selectedScenarioId
+                });
+                throw new Error('Failed to update room status for map generation');
+            }
+
+            logger.info('[GAME ACTION] Room status updated to map_generation successfully', { roomCode });
+
+            // Step 3: Provide redirect target for client (fetcher) to navigate to map-generation
+            logger.debug('[GAME ACTION] Returning redirectTo for map-generation', {
+                roomCode,
+                selectedScenarioId
+            });
+
+            return json({ redirectTo: `/map-generation?roomCode=${roomCode}` });
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            logger.error('[GAME ACTION] Caught error in startGame handler - returning 500 to client', {
+                roomCode,
+                selectedScenarioId,
+                userId,
+                errorMessage: errorMsg,
+                errorStack: error instanceof Error ? error.stack : undefined
+            });
+            // Return the actual error message to the client for debugging (dev only)
+            return json(
+                { error: errorMsg || "Failed to save scenario winner to database" },
+                { status: 500 }
+            );
         }
     }
 
@@ -1157,7 +1273,11 @@ export default function GameRoute() {
                     
                     const response = await fetch('/game', {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        credentials: 'same-origin',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
                     });
                     
                     if (response.ok) {

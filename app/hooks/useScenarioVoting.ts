@@ -400,6 +400,9 @@ export function useScenarioVoting({
     formData.append('character', JSON.stringify(activeCharacter));
     formData.append('duration', selectedDuration);
     formData.append('prompt', customPrompt);
+    // Force a fresh generation to replace previous scenarios
+    formData.append('unique', 'true');
+    formData.append('forceNewGeneration', 'true');
     
     scenarioFetcher.submit(formData, { method: 'post', action: '/api/room/scenarios' });
     

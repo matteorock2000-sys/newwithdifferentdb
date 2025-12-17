@@ -1,5 +1,6 @@
 import { db } from "~/services/db.server";
 import { getRoomByCode, storeRoomScenarios } from "~/services/room.server";
+import { setRoomScenarioWinner } from "~/services/roomScenarios.server";
 import type { DBRoom } from "~/services/room.server";
 
 const logPrefix = "[SCENARIO VOTE SERVICE]";
@@ -215,6 +216,27 @@ export async function castVote(
   }
   
   console.log(`${logPrefix} Vote cast successfully for room ${roomCode}, scenario ${scenarioId}`);
+
+  // After storing the vote, check for a strict majority winner and persist it
+  try {
+    const voteCounts = await getScenarioVoteCounts(roomCode);
+    const totalActiveSlots = room.setup_slots.filter((s: any) => s.type === 'Human' || s.type === 'AI').length;
+
+    // Determine if any scenario has a strict majority (> totalActiveSlots / 2)
+    for (const [sId, count] of Object.entries(voteCounts)) {
+      if (count > totalActiveSlots / 2) {
+        try {
+          await setRoomScenarioWinner(roomCode, sId);
+          console.log(`${logPrefix} Majority winner detected and saved: ${sId} for room ${roomCode}`);
+        } catch (err) {
+          console.error(`${logPrefix} Failed to persist majority winner`, { roomCode, scenarioId: sId, err });
+        }
+        break; // Only one scenario can have strict majority
+      }
+    }
+  } catch (err) {
+    console.error(`${logPrefix} Error while checking for majority after vote`, { roomCode, err });
+  }
   return {
     success: true,
     message: "Vote cast successfully!",

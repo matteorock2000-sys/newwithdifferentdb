@@ -59,7 +59,10 @@ export function subscribeToRoomChanges(
             transformedPayload.data.diceRollComplete = newRoom.dice_rolling_state?.status === 'completed';
             transformedPayload.data.showDiceRoll = true; // Assuming we always show roll on update
             transformedPayload.data.isInitializingDice = false;
-            transformedPayload.data.winningScenarioFromDice = newRoom.scenarios?.find(s => s.id === newRoom.scenario_winner_id) || null; // Infer winner
+            // Handle scenario_winner_id which may be JSONB object or string
+            const winnerRef = newRoom.scenario_winner_id;
+            const winnerId = typeof winnerRef === 'string' ? winnerRef : winnerRef?.id;
+            transformedPayload.data.winningScenarioFromDice = newRoom.scenarios?.find(s => s.id === winnerId) || null; // Infer winner
           } else if (oldRoom.participants !== newRoom.participants || oldRoom.setup_slots !== newRoom.setup_slots) {
             transformedPayload.type = 'participants_updated';
             transformedPayload.data.party = newRoom.setup_slots; // Pass updated slots as party
