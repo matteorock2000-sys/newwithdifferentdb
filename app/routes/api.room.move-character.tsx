@@ -1,7 +1,10 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { requireUser } from "~/services/auth.server";
-import { updateCharacterCoordinates, getRoomByCode } from "~/services/room.server"; // Import getRoomByCode for authorization
+import { updateCharacterCoordinates } from "~/services/roomGameplay.server";
+import { getRoomByCode } from "~/services/roomCore.server"; // Import getRoomByCode for authorization
+
+import { logger } from "~/utils/logger";
 
 export async function action({ request }: ActionFunctionArgs) {
   const userId = (await requireUser(request)).id;
@@ -37,6 +40,11 @@ export async function action({ request }: ActionFunctionArgs) {
       return json({ success: false, error: "Unauthorized to move this character." }, { status: 403 });
     }
 
+    // Characters can only be moved when the game is active
+    if (room.status !== 'active_game') {
+      return json({ success: false, error: "Character movement is only allowed during an active game." }, { status: 403 });
+    }
+
     const success = await updateCharacterCoordinates(roomCode, characterId, x, y);
 
     if (success) {
@@ -45,7 +53,7 @@ export async function action({ request }: ActionFunctionArgs) {
       return json({ success: false, error: "Failed to update character coordinates." }, { status: 500 });
     }
   } catch (error) {
-    console.error("[MOVE CHARACTER API] Error moving character:", error);
+    logger.error("[MOVE CHARACTER API] Error moving character", { error: error instanceof Error ? error.message : "Unknown error" });
     return json({ success: false, error: "Internal server error." }, { status: 500 });
   }
 }

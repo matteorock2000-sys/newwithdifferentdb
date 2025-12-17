@@ -1,5 +1,5 @@
 import { json, LoaderFunction, ActionFunction, redirect } from "@remix-run/node";
-import { useLoaderData, useFetcher, Link } from "@remix-run/react";
+import { useLoaderData, useFetcher, Link, useRevalidator } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import { requireUser } from "~/services/auth.server";
 import { getCharactersForUser, saveCharacter, deleteCharacter, findNextAvailableSlot, saveTemporaryPartySetup } from "~/services/db.server";
@@ -60,9 +60,10 @@ export const loader: LoaderFunction = async ({ request }) => {
   const validCharacters = characters.filter((c): c is Character => c !== null).map(char => {
     logger.debug(`[INDEX LOADER] Processing character: ${char.name}, original avatarUrl present: ${!!char.avatarUrl}`);
     // If avatarUrl is a data URI (large base64) OR a raw base64 string, strip it to prevent 431 errors
+    // But keep file paths (starting with /uploads/) and URLs
     if (char.avatarUrl && 
         (char.avatarUrl.startsWith('data:image/') || 
-         (!char.avatarUrl.startsWith('http://') && !char.avatarUrl.startsWith('https://') && !char.avatarUrl.startsWith('/') && char.avatarUrl.length > 200))) {
+         (!char.avatarUrl.startsWith('http://') && !char.avatarUrl.startsWith('https://') && !char.avatarUrl.startsWith('/uploads/') && !char.avatarUrl.startsWith('/') && char.avatarUrl.length > 200))) {
       logger.debug(`[INDEX LOADER] Stripping suspected base64 avatar for character: ${char.name}, ID: ${char.id}`);
       return { ...char, avatarUrl: null, _hasBase64Avatar: true };
     }
@@ -246,6 +247,7 @@ export default function Index() {
   const { user, characters: loadedCharacters } = useLoaderData<LoaderData>();
   const characters = loadedCharacters || []; // DEFENSIVE FIX: Ensure characters is an array
   const fetcher = useFetcher<{ success: boolean, error?: string, characters?: Character[] , data?: { characterData: Character }, existingCharacters?: Character[] }>();
+  const revalidator = useRevalidator(); // Get revalidator instance
   
   const [isImporterOpen, setIsImporterOpen] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -326,6 +328,7 @@ export default function Index() {
     fetcher.submit(formData, { method: 'post' });
     setIsFormOpen(false);
     setEditingCharacter(null);
+    revalidator.revalidate(); // Revalidate loader data after save
     
     if (!selectedCharacterId || selectedCharacterId === originalIdToDelete) {
         setSelectedCharacterId(character.id);
@@ -471,11 +474,14 @@ export default function Index() {
                     playerSlot={slot} 
                     allCharacters={characters}
                     allSlots={partySlots} // Pass all slots for availability check
+                    viewMode="dashboard"
                     onSlotChange={handleSlotChange}
                     onEditCharacter={handleEditCharacter}
                     onDeleteCharacter={handleDeleteCharacter}
-                    onToggleReady={handleToggleReady} // <-- ADDED PROP
-                    showManagementButtons={true} // <-- ADDED: Enable Edit/Delete buttons on dashboard
+                    onToggleReady={handleToggleReady}
+                    showManagementButtons={true} 
+                    currentUserId={user.id}
+                    currentUsername={user.username} // NEW PROP
                   />
                 ))}
               </div>

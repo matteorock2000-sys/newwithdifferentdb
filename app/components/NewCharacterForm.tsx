@@ -232,6 +232,10 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
       logger.debug('[NewCharacterForm] InitialData has base64 avatar, fetching from API.');
       setIsLoadingPortrait(true);
       avatarFetcher.load(`/api/character.portrait.serve-base64?characterId=${initialData.id}`);
+    } else if (initialData && initialData.avatarUrl && !character.avatarUrl) {
+      // If initialData has an avatarUrl (file path or URL), use it directly
+      logger.debug('[NewCharacterForm] InitialData has avatarUrl, using directly:', { avatarUrl: initialData.avatarUrl });
+      setCharacter(prev => ({ ...prev!, avatarUrl: initialData.avatarUrl }));
     }
   }, [initialData, character.avatarUrl, avatarFetcher, isLoadingPortrait]);
 
@@ -241,8 +245,11 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
       if (avatarFetcher.data.avatarDataUri) {
         logger.debug('[NewCharacterForm] Fetched base64 avatar data successfully.');
         setCharacter(prev => ({ ...prev!, avatarUrl: avatarFetcher.data.avatarDataUri }));
+      } else if (avatarFetcher.data.avatarUrl) {
+        logger.debug('[NewCharacterForm] Fetched avatar file path successfully.');
+        setCharacter(prev => ({ ...prev!, avatarUrl: avatarFetcher.data.avatarUrl }));
       } else if (avatarFetcher.data.error) {
-        logger.error('[NewCharacterForm] Failed to fetch base64 avatar data:', { error: avatarFetcher.data.error });
+        logger.error('[NewCharacterForm] Failed to fetch avatar data:', { error: avatarFetcher.data.error });
       }
       setIsLoadingPortrait(false);
     }
@@ -554,20 +561,58 @@ export default function NewCharacterForm({ initialData, onSave, onClose, slotInd
     // Fallback to server-side generation
     logger.debug('Falling back to server-side generation');
     
-    const formData = new FormData();
-    formData.append('intent', 'generatePortrait');
-    formData.append('characterData', JSON.stringify(finalizeCharacter()));
-    // Explicitly tell the server which model/provider to use for the config
-    formData.append('model', 'gemini-2.5-flash-image-preview');
-    formData.append('provider', 'puter-js');
-    if (character.id) {
-      formData.append('characterId', character.id);
-    }
+    // Use JSON request body to avoid header field size issues with large base64 data
+    const characterData = finalizeCharacter();
+    const requestData = {
+      intent: 'generatePortrait',
+      characterData: characterData,
+      model: 'gemini-2.5-flash-image-preview',
+      provider: 'puter-js',
+      characterId: character.id
+    };
     
     logger.debug('Submitting to action', { action: '/api/character/portrait/generate' });
-    fetcher.submit(formData, { method: 'post', action: '/api/character/portrait/generate' });
     
-  }, [isLoadingPortrait, regenerationCount, character, finalizeCharacter, fetcher]);
+    // Use fetch with timeout instead of fetcher to avoid message channel timeout
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 35000); // 35 second timeout
+      
+      const response = await fetch('/api/character/portrait/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestData),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success && data.portraitUrl) {
+        logger.debug("Client received portraitUrl:", { imageUrl: data.portraitUrl });
+        setCharacter(prev => ({ ...prev!, avatarUrl: data.portraitUrl }));
+        setPortraitRetryCount(0);
+        setIsLoadingPortrait(false);
+      } else {
+        throw new Error(data.error || 'Failed to generate portrait');
+      }
+    } catch (error: any) {
+      logger.error('Portrait generation failed', { error: error.message });
+      setIsLoadingPortrait(false);
+      
+      if (error.name === 'AbortError') {
+        logger.error('Portrait generation timed out');
+      }
+    }
+    
+  }, [isLoadingPortrait, regenerationCount, character, finalizeCharacter]);
 
   const handleConfirm = useCallback(() => {
     const finalCharacter = finalizeCharacter();

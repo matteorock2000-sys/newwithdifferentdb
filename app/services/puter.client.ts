@@ -8,6 +8,8 @@ declare global {
   }
 }
 
+import logger from "~/utils/logger";
+
 // Ensure Puter.js is loaded
 export async function ensurePuterLoaded(): Promise<void> {
   // Check if Puter.js is already loaded
@@ -22,12 +24,12 @@ export async function ensurePuterLoaded(): Promise<void> {
   
   return new Promise((resolve, reject) => {
     script.onload = () => {
-      console.log('Puter.js loaded successfully');
+      logger.debug('Puter.js loaded successfully');
       resolve();
     };
     
     script.onerror = () => {
-      console.error('Failed to load Puter.js');
+      logger.error('Failed to load Puter.js');
       reject(new Error('Failed to load Puter.js'));
     };
     
@@ -60,7 +62,7 @@ export async function generateImageWithPuter(
       throw new Error('Puter.js is not properly loaded');
     }
 
-    console.log('Generating image with Puter.js:', { prompt, model, width, height });
+    logger.debug('Generating image with Puter.js:', { prompt, model, width, height });
 
     // Generate image using Puter.js
     const imageElement = await window.puter.ai.txt2img(prompt, {
@@ -77,12 +79,12 @@ export async function generateImageWithPuter(
     // Convert image to base64
     const base64 = await convertImageToBase64(imageElement);
     
-    console.log('Image generated successfully, base64 length:', base64.length);
+    logger.debug('Image generated successfully, base64 length:', { length: base64.length });
     
     return base64;
 
   } catch (error) {
-    console.error('Error generating image with Puter.js:', error);
+    logger.error('Error generating image with Puter.js', { error: error instanceof Error ? error.message : "Unknown error" });
     // Don't throw error, return empty string to trigger fallback
     return '';
   }
@@ -118,10 +120,10 @@ export async function saveImageToServer(base64Image: string, filename: string): 
   try {
     // This would save the image to your server
     // For now, we'll just return the base64 data
-    console.log('Image saved to server:', filename);
+    logger.debug('Image saved to server:', { filename });
     return base64Image;
   } catch (error) {
-    console.error('Error saving image to server:', error);
+    logger.error('Error saving image to server', { error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error(`Failed to save image to server: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }

@@ -6,7 +6,7 @@ interface InputProps {
   label: string;
   name: string;
   value: string | number | undefined;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => void;
+  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
   type?: 'text' | 'number';
   min?: string;
   placeholder?: string;
@@ -98,8 +98,9 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({ options, selected, onC
     <div className="space-y-2">
       <div className="max-h-48 overflow-y-auto bg-gray-800 p-3 rounded-md border border-gray-700">
         {allOptions.map(option => (
-          <label key={option} className="flex items-center gap-2 text-gray-300 hover:bg-gray-700 p-1 rounded cursor-pointer">
+          <label htmlFor={`multiselect-${option}`} key={option} className="flex items-center gap-2 text-gray-300 hover:bg-gray-700 p-1 rounded cursor-pointer">
             <input
+              id={`multiselect-${option}`}
               type="checkbox"
               checked={selected.includes(option)}
               onChange={() => onChange(option)}
@@ -110,14 +111,18 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({ options, selected, onC
         ))}
       </div>
       {allowCustom && (
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={customInput}
-            onChange={(e) => setCustomInput(e.target.value)}
-            placeholder="Add custom item/feature"
-            className="flex-grow p-2 bg-gray-700 border border-gray-600 rounded-md"
-          />
+        <div className="flex gap-2 items-end">
+          <div className="flex-grow space-y-1">
+            <label htmlFor="custom-multiselect-input" className="block text-sm font-medium text-gray-400">Add Custom</label>
+            <input
+              id="custom-multiselect-input"
+              type="text"
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              placeholder="Add custom item/feature"
+              className="flex-grow p-2 bg-gray-700 border border-gray-600 rounded-md"
+            />
+          </div>
           <button
             type="button"
             onClick={handleAddCustom}
@@ -154,7 +159,7 @@ export const WeaponInput: React.FC<WeaponInputProps> = ({ label, weapon, onChang
     }
   };
 
-  const handleDetailChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleDetailChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     onChange({ ...currentWeapon, [name]: value });
   };

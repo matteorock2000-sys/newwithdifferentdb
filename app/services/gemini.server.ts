@@ -1,8 +1,9 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { json } from '@remix-run/node';
 import type { Character, AdventureScenario, BossFight, PlayerSlot } from '~/types'; // Import BossFight type
-import { generateImage as generateImageWithFreepik } from '~/services/freepik.server'; // Import Freepik service
+import { generateImage as generateImageWithFreepik, downloadImageAsBase64 } from '~/services/freepik.server'; // Import Freepik service
 import { logger } from '~/utils/logger';
+import { getRoomScenariosForVoting } from '~/services/roomScenarios.server';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -15,8 +16,9 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 // Try different models in order of preference to handle quota issues
 // Note: gemini-1.5-flash is not available in v1beta, so we only use the available models
 const MODEL_PREFERENCES = [
-  'gemini-2.5-flash-preview-09-2025',  // Primary model, as requested by user
-  'gemini-2.0-flash'     // Fallback model, as requested by user
+  'gemini-2.0-flash',     // Primary model (changed from gemini-2.5-flash-preview-09-2025)
+  'gemini-2.5-flash-preview-09-2025',  // Fallback model
+  'gemini-2.0-pro'        // Additional fallback model for better availability
 ];
 
 // Cache for storing recently generated scenarios to avoid duplicate API calls
@@ -24,7 +26,7 @@ const scenarioCache = new Map<string, { scenarios: any[], timestamp: number }>()
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour cache
 
 function getModel() {
-  return genAI.getGenerativeModel({ model: MODEL_PREFERENCES[0] });
+  return genAI.getGenerativeModel({ model: MODEL_PREFERENCES[0] }); // Now uses gemini-2.0-flash as primary
 }
 
 // Enhanced generateContent with retry logic and model fallback
@@ -36,6 +38,7 @@ async function generateContentWithRetry(prompt: string, maxRetries: number = 3):
       try {
         const model = genAI.getGenerativeModel({ model: modelPreference });
         logger.debug(`[GEMINI] Attempting to generate content with model: ${modelPreference} (attempt ${attempt}/${maxRetries})`);
+        logger.info(`[GEMINI] Using model: ${modelPreference} for scenario generation`);
         
         const result = await model.generateContent(prompt);
         logger.debug(`[GEMINI] Successfully generated content with model: ${modelPreference}`);
@@ -57,6 +60,12 @@ async function generateContentWithRetry(prompt: string, maxRetries: number = 3):
           continue; // Try next model
         }
         
+        // Check if this is a service unavailable error (503)
+        if (error.message && error.message.includes('503 Service Unavailable')) {
+          logger.warn(`[GEMINI] Service temporarily unavailable for model ${modelPreference}, trying next model...`);
+          continue; // Try next model
+        }
+        
         // For other errors, break and try next attempt
         break;
       }
@@ -71,43 +80,15 @@ async function generateContentWithRetry(prompt: string, maxRetries: number = 3):
   }
   
   // If all retries failed, throw the last error with additional context
-  throw new Error(`Gemini API failed after ${maxRetries} attempts with all models. Last error: ${lastError?.message || 'Unknown error'}`);
+  throw new Error(`Gemini API failed after ${maxRetries} attempts with all models (${MODEL_PREFERENCES.join(', ')}). Last error: ${lastError?.message || 'Unknown error'}`);
 }
 
-// Fallback scenario generator for when API fails
+// Function to generate fallback scenarios (now removed - we wait for Gemini instead)
 function generateFallbackScenarios(character: Character, duration: string, partyContext: string = ''): AdventureScenario[] {
-  logger.debug('[GEMINI] Generating fallback scenarios due to API failure');
+  logger.debug('[GEMINI] API call failed but fallback scenarios are disabled - throwing error instead');
   
-  const scenarios: AdventureScenario[] = [];
-  const themes = [
-    { title: 'The Cursed Relic', environment: 'ancient ruins', objective: 'retrieve a cursed artifact', enemies: ['Skeletal Warriors', 'Shadow Wraiths'] },
-    { title: 'Forest of Whispers', environment: 'enchanted forest', objective: 'investigate mysterious disappearances', enemies: ['Corrupted Dryads', 'Giant Spiders'] },
-    { title: 'Tomb of the Forgotten King', environment: 'underground crypt', objective: 'uncover ancient secrets', enemies: ['Mummified Guards', 'Spectral Sentinels'] },
-    { title: 'Siege of Brightwatch', environment: 'fortified town', objective: 'defend against invading forces', enemies: ['Orc Raiders', 'Goblin Sappers'] }
-  ];
-  
-  for (let i = 0; i < 4; i++) {
-    const theme = themes[i];
-    scenarios.push({
-      id: `fallback-${Date.now()}-${i}`,
-      title: theme.title,
-      surrounding: `The ${theme.environment} looms before you, filled with an eerie silence. The air is thick with anticipation as you prepare to ${theme.objective}.`,
-      objective: `A local ${character.race} has hired you to ${theme.objective}. Time is of the essence!`,
-      possibleEncounters: [
-        `Navigating treacherous terrain in the ${theme.environment}`,
-        `Encountering mysterious clues about the ${theme.title}`,
-        `Solving ancient puzzles left by forgotten civilizations`
-      ],
-      possibleEnemies: theme.enemies,
-      bossFight: {
-        name: `${theme.title} Guardian`,
-        description: `A powerful entity that protects the secrets of the ${theme.title}. Only the worthy may pass.`
-      },
-      mapDescription: `A detailed 1080p map of ${theme.environment} with key locations marked. Player characters start at the entrance, ready to explore.`
-    });
-  }
-  
-  return scenarios;
+  // Instead of generating fallback scenarios, throw an error
+  throw new Error('Gemini API call failed. Please try again.');
 }
 
 // Utility function to clean text by removing emojis and excessive whitespace
@@ -119,7 +100,8 @@ function cleanText(text: string): string {
   return cleaned.trim();
 }
 
-export async function generateScenariosForCharacter(character: Character, duration: string, regenerationPrompt?: string, partyCharacters?: Character[], partySlots?: PlayerSlot[]): Promise<AdventureScenario[]> {
+export async function generateScenariosForCharacter(character: Character, duration: string, regenerationPrompt?: string, partyCharacters?: Character[], partySlots?: PlayerSlot[], roomCode?: string): Promise<AdventureScenario[]> {
+  console.log(`[GEMINI] Starting scenario generation for character: ${character.name}, room: ${roomCode}`);
 
   // Build party summary
   const activePartyMembers = (partyCharacters || []).filter(c => c);
@@ -135,11 +117,30 @@ export async function generateScenariosForCharacter(character: Character, durati
     ? `\n\nCRITICAL CONTEXT: The user has requested that these scenarios focus on the following theme: "${regenerationPrompt.trim()}". Incorporate this theme into all four scenarios.`
     : '';
 
+  // Fetch previous scenarios to ensure uniqueness
+  let previousScenarios: AdventureScenario[] = [];
+  if (roomCode) {
+    try {
+      previousScenarios = await getRoomScenariosForVoting(roomCode);
+      console.log(`[GEMINI] Found ${previousScenarios.length} previous scenarios for room ${roomCode}`);
+    } catch (error) {
+      console.warn(`[GEMINI] Failed to fetch previous scenarios for room ${roomCode}:`, error);
+    }
+  }
+
+  const previousScenariosContext = previousScenarios.length > 0
+    ? `\n\nCRITICAL REQUIREMENT: These new scenarios MUST be completely different from the following previously generated scenarios:\n${previousScenarios.map((s, i) => 
+        `${i + 1}. Title: "${s.title}"\n   Environment: ${s.surrounding}\n   Objective: ${s.objective}`
+      ).join('\n\n')}\n\nEnsure the new scenarios have different titles, environments, objectives, and core conflicts.`
+    : '';
+
   const prompt = `
   You are an expert Dungeons & Dragons 5th Edition Dungeon Master AI, renowned for crafting innovative and engaging adventures. Your task is to generate exactly 4 distinct, compelling, and highly dynamic starting adventure scenarios for a D&D 5th Edition game.
 
   CRITICAL REQUIREMENT: All 4 scenarios must be fundamentally different from each other in terms of plot hook, pacing, environment, and core conflict. Each scenario must have a unique title, a unique and highly evocative surrounding environment description, and a unique primary objective. Do not repeat themes, titles, locations, or core mechanics across the scenarios. Ensure the surrounding descriptions are rich in sensory details and atmosphere, making each one distinct.
   Aim for a balance of combat, exploration, social interaction, and potential moral dilemmas across the set of scenarios.
+
+  ${previousScenariosContext}
 
   The scenarios should be perfectly tailored to the starting level (Level ${character.level}) and the specific party composition.
   The desired campaign duration is: ${duration}.
@@ -193,7 +194,7 @@ export async function generateScenariosForCharacter(character: Character, durati
   try {
     // Add timeout to prevent hanging
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Gemini API request timed out after 30 seconds')), 30000);
+      setTimeout(() => reject(new Error('Gemini API request timed out after 60 seconds')), 60000);
     });
     
     const result = await Promise.race([
@@ -202,6 +203,15 @@ export async function generateScenariosForCharacter(character: Character, durati
     ]);
     
     const responseText = result.response.text();
+    console.log(`[GEMINI] Response text length: ${responseText.length}`);
+    console.log(`[GEMINI] Response text first 100 chars:`, { chars: responseText.substring(0, 100) });
+    
+    // Check if response is HTML (error page)
+    if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html') || responseText.trim().startsWith('<!')) {
+      console.error(`[GEMINI] Received HTML response instead of JSON. This might be an error page.`);
+      throw new Error('Gemini API returned HTML instead of JSON. Check API key and endpoint.');
+    }
+    
     logger.debug("Gemini Scenario Response:", { responseText });
 
     // Try multiple patterns to extract JSON
@@ -356,7 +366,7 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
           
           // Add timeout to retry call as well
           const retryTimeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Gemini retry request timed out after 20 seconds')), 20000);
+            setTimeout(() => reject(new Error('Gemini retry request timed out after 30 seconds')), 30000);
           });
           
           const retryResult = await Promise.race([
@@ -382,204 +392,32 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
         } catch (retryError) {
           logger.error(`[GEMINI] Retry with Gemini feedback failed`, { error: retryError.message });
           
-          // Strategy 5: Create fallback scenarios manually
-          logger.error(`[GEMINI] Creating fallback scenarios due to parsing failure`);
-          parsedResponse = [
-          {
-            id: crypto.randomUUID(),
-            title: "The Mysterious Adventure",
-            surrounding: "A mysterious land filled with danger and wonder.",
-            objective: "Explore the unknown and discover its secrets.",
-            possibleEncounters: ["Meeting strange creatures", "Solving ancient puzzles"],
-            possibleEnemies: ["Mysterious monsters"],
-            bossFight: {
-              name: "The Guardian",
-              description: "A powerful being protecting the land's secrets."
-            },
-            mapDescription: "A simple map with a few key locations."
-          },
-          {
-            id: crypto.randomUUID(),
-            title: "The Ancient Ruins",
-            surrounding: "Crumbled ruins hinting at a forgotten civilization.",
-            objective: "Uncover the truth behind the ancient culture.",
-            possibleEncounters: ["Exploring hidden chambers", "Deciphering old texts"],
-            possibleEnemies: ["Guardian constructs"],
-            bossFight: {
-              name: "The Last Guardian",
-              description: "An ancient protector of the ruins."
-            },
-            mapDescription: "Ruins with various chambers and hidden passages."
-          },
-          {
-            id: crypto.randomUUID(),
-            title: "The Enchanted Forest",
-            surrounding: "A magical forest teeming with life and mystery.",
-            objective: "Navigate the forest and meet its magical inhabitants.",
-            possibleEncounters: ["Meeting forest creatures", "Finding hidden glades"],
-            possibleEnemies: ["Forest predators"],
-            bossFight: {
-              name: "The Forest Spirit",
-              description: "A powerful entity embodying the forest's magic."
-            },
-            mapDescription: "A forest map with clearings and magical sites."
-          },
-          {
-            id: crypto.randomUUID(),
-            title: "The Dark Dungeon",
-            surrounding: "A foreboding dungeon filled with traps and monsters.",
-            objective: "Survive the dungeon and claim its treasure.",
-            possibleEncounters: ["Disarming traps", "Fighting monsters"],
-            possibleEnemies: ["Dungeon denizens"],
-            bossFight: {
-              name: "The Dungeon Master",
-              description: "A cunning master of the dungeon's dangers."
-            },
-            mapDescription: "A dungeon map with rooms and treasure locations."
+          // Instead of creating fallback scenarios, throw an error
+          logger.error(`[GEMINI] JSON parsing failed after all attempts - throwing error instead of fallback`);
+          throw new Error(`Failed to generate scenarios: Gemini API returned invalid JSON after all retry attempts. Please try again.`);
           }
-        ];
-        logger.debug(`[GEMINI] Created 4 fallback scenarios`);
-        }
       }
       
       // Ensure parsedResponse is always defined
       if (!parsedResponse) {
-        logger.error(`[GEMINI] parsedResponse is undefined, creating fallback scenarios`);
-        parsedResponse = [
-          {
-            id: crypto.randomUUID(),
-            title: "The Mysterious Adventure",
-            surrounding: "A mysterious land filled with danger and wonder.",
-            objective: "Explore the unknown and discover its secrets.",
-            possibleEncounters: ["Meeting strange creatures", "Solving ancient puzzles"],
-            possibleEnemies: ["Mysterious monsters"],
-            bossFight: {
-              name: "The Guardian",
-              description: "A powerful being protecting the land's secrets."
-            },
-            mapDescription: "A simple map with a few key locations."
-          },
-          {
-            id: crypto.randomUUID(),
-            title: "The Ancient Ruins",
-            surrounding: "Crumbled ruins hinting at a forgotten civilization.",
-            objective: "Uncover the truth behind the ancient culture.",
-            possibleEncounters: ["Exploring hidden chambers", "Deciphering old texts"],
-            possibleEnemies: ["Guardian constructs"],
-            bossFight: {
-              name: "The Last Guardian",
-              description: "An ancient protector of the ruins."
-            },
-            mapDescription: "Ruins with various chambers and hidden passages."
-          },
-          {
-            id: crypto.randomUUID(),
-            title: "The Enchanted Forest",
-            surrounding: "A magical forest teeming with life and mystery.",
-            objective: "Navigate the forest and meet its magical inhabitants.",
-            possibleEncounters: ["Meeting forest creatures", "Finding hidden glades"],
-            possibleEnemies: ["Forest predators"],
-            bossFight: {
-              name: "The Forest Spirit",
-              description: "A powerful entity embodying the forest's magic."
-            },
-            mapDescription: "A forest map with clearings and magical sites."
-          },
-          {
-            id: crypto.randomUUID(),
-            title: "The Dark Dungeon",
-            surrounding: "A foreboding dungeon filled with traps and monsters.",
-            objective: "Survive the dungeon and claim its treasure.",
-            possibleEncounters: ["Disarming traps", "Fighting monsters"],
-            possibleEnemies: ["Dungeon denizens"],
-            bossFight: {
-              name: "The Dungeon Master",
-              description: "A cunning master of the dungeon's dangers."
-            },
-            mapDescription: "A dungeon map with rooms and treasure locations."
-          }
-        ];
+        logger.error(`[GEMINI] parsedResponse is undefined - throwing error instead of fallback`);
+        throw new Error(`Failed to generate scenarios: Gemini API returned no response. Please try again.`);
       }
     }
     
     if (!Array.isArray(parsedResponse)) {
       logger.error("Response is not an array:", { response: parsedResponse });
-      logger.error("Creating fallback scenarios due to invalid response format");
+      logger.error("Throwing error instead of creating fallback scenarios");
       
-      // Create fallback scenarios
-      parsedResponse = [
-        {
-          id: crypto.randomUUID(),
-          title: "The Mysterious Adventure",
-          surrounding: "A mysterious land filled with danger and wonder.",
-          objective: "Explore the unknown and discover its secrets.",
-          possibleEncounters: ["Meeting strange creatures", "Solving ancient puzzles"],
-          possibleEnemies: ["Mysterious monsters"],
-          bossFight: {
-            name: "The Guardian",
-            description: "A powerful being protecting the land's secrets."
-          },
-          mapDescription: "A simple map with a few key locations."
-        },
-        {
-          id: crypto.randomUUID(),
-          title: "The Ancient Ruins",
-          surrounding: "Crumbled ruins hinting at a forgotten civilization.",
-          objective: "Uncover the truth behind the ancient culture.",
-          possibleEncounters: ["Exploring hidden chambers", "Deciphering old texts"],
-          possibleEnemies: ["Guardian constructs"],
-          bossFight: {
-            name: "The Last Guardian",
-            description: "An ancient protector of the ruins."
-          },
-          mapDescription: "Ruins with various chambers and hidden passages."
-        },
-        {
-          id: crypto.randomUUID(),
-          title: "The Enchanted Forest",
-          surrounding: "A magical forest teeming with life and mystery.",
-          objective: "Navigate the forest and meet its magical inhabitants.",
-          possibleEncounters: ["Meeting forest creatures", "Finding hidden glades"],
-          possibleEnemies: ["Forest predators"],
-          bossFight: {
-            name: "The Forest Spirit",
-            description: "A powerful entity embodying the forest's magic."
-          },
-          mapDescription: "A forest map with clearings and magical sites."
-        },
-        {
-          id: crypto.randomUUID(),
-          title: "The Dark Dungeon",
-          surrounding: "A foreboding dungeon filled with traps and monsters.",
-          objective: "Survive the dungeon and claim its treasure.",
-          possibleEncounters: ["Disarming traps", "Fighting monsters"],
-          possibleEnemies: ["Dungeon denizens"],
-          bossFight: {
-            name: "The Dungeon Master",
-            description: "A cunning master of the dungeon's dangers."
-          },
-          mapDescription: "A dungeon map with rooms and treasure locations."
-        }
-      ];
+      // Instead of creating fallback scenarios, throw an error
+      throw new Error(`Failed to generate scenarios: Gemini API returned invalid response format. Please try again.`);
     }
 
     // Validate each scenario has required fields
     const validatedScenarios = parsedResponse.map((scenario: any, index) => {
       if (!scenario || typeof scenario !== 'object') {
         logger.warn(`[VALIDATION] Invalid scenario at index ${index}:`, { scenario });
-        return {
-          id: crypto.randomUUID(),
-          title: `Fallback Scenario ${index + 1}`,
-          surrounding: "A mysterious adventure awaits.",
-          objective: "Explore and discover what lies ahead.",
-          possibleEncounters: ["Basic encounters"],
-          possibleEnemies: ["Common foes"],
-          bossFight: {
-            name: "The Guardian",
-            description: "A standard guardian of the realm."
-          },
-          mapDescription: "A basic adventure map."
-        };
+        throw new Error(`Failed to generate scenarios: Invalid scenario data at index ${index}. Please try again.`);
       }
 
       // Ensure required fields exist
@@ -598,30 +436,27 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
       };
     });
 
-    if (validatedScenarios.length !== 4) {
-      logger.warn(`AI returned ${validatedScenarios.length} scenarios instead of 4. Padding or trimming as needed.`);
-      // If less than 4, pad with fallback scenarios
-      while (validatedScenarios.length < 4) {
-        validatedScenarios.push({
-          id: crypto.randomUUID(),
-          title: `Additional Adventure ${validatedScenarios.length + 1}`,
-          surrounding: "Another exciting location.",
-          objective: "Another quest to complete.",
-          possibleEncounters: ["Extra encounters"],
-          possibleEnemies: ["Additional foes"],
-          bossFight: {
-            name: "Extra Boss",
-            description: "An additional challenge."
-          },
-          mapDescription: "Another adventure map."
-        });
-      }
-      // If more than 4, trim to 4
-      validatedScenarios.length = 4;
+    // Ensure uniqueness based on title
+    const titles = new Set<string>();
+    const uniqueScenarios = validatedScenarios.filter(scenario => {
+        const trimmedTitle = scenario.title.toLowerCase().trim();
+        if (titles.has(trimmedTitle)) {
+            logger.warn(`[GEMINI] Duplicate scenario title found, removing: "${scenario.title}"`);
+            return false;
+        }
+        titles.add(trimmedTitle);
+        return true;
+    });
+
+    let finalScenarios = uniqueScenarios;
+
+    if (finalScenarios.length !== 4) {
+      logger.warn(`AI returned ${finalScenarios.length} unique scenarios instead of 4. Throwing error instead of padding.`);
+      throw new Error(`Failed to generate scenarios: Gemini API returned ${finalScenarios.length} scenarios instead of 4. Please try again.`);
     }
 
     // Return the validated scenarios
-    return validatedScenarios.map((scenario: any) => {
+    return finalScenarios.map((scenario: any) => {
       if (!scenario.id) {
         scenario.id = crypto.randomUUID();
       }
@@ -658,32 +493,16 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
     // If it's a timeout error, provide specific guidance
     if (errorMessage.includes('timed out')) {
       logger.error("[GEMINI] Request timed out - this may indicate high server load or network issues");
+      throw new Error('Gemini API request timed out. Please try again.');
     }
     
-    // Check for quota-related errors and use fallback scenarios
+    // Check for quota-related errors and throw error instead of using fallback scenarios
     if (errorMessage && (errorMessage.includes('429 Too Many Requests') || 
                          errorMessage.includes('quota') || 
                          errorMessage.includes('Quota exceeded') ||
                          errorMessage.includes('Gemini API failed after'))) {
-      logger.warn("[GEMINI] Quota or API limit reached, generating fallback scenarios");
-      
-      // Generate fallback scenarios
-      const fallbackScenarios = generateFallbackScenarios(character, duration, regenerationPrompt);
-      
-      // Cache the fallback scenarios to avoid repeated API calls
-      const cacheKey = JSON.stringify({
-        characterId: character.id,
-        duration,
-        regenerationPrompt: regenerationPrompt?.trim(),
-        partySize: partyCharacters?.length || 0
-      });
-      
-      scenarioCache.set(cacheKey, {
-        scenarios: fallbackScenarios,
-        timestamp: Date.now()
-      });
-      
-      return fallbackScenarios;
+      logger.warn("[GEMINI] Quota or API limit reached - throwing error instead of generating fallback scenarios");
+      throw new Error('Gemini API quota exceeded. Please try again later.');
     }
     
     // Throw a specific error that can be caught by the action handler
@@ -756,13 +575,44 @@ Art Direction: Professional fantasy character portrait, neutral expression, deta
 
   try {
     logger.info("Generating character portrait", { characterName: character.name });
-    const imageUrl = await generateImageWithFreepik(positivePrompt, 'square_1_1');
-    logger.info("Character portrait generation completed successfully");
-    return imageUrl;
+    
+    // Use faster polling with shorter intervals and fewer attempts
+    const imageUrl = await generateImageWithFreepik(positivePrompt, 'square_1_1', 10, 2000);
+    
+    // Download the image and save it as a file
+    const filePath = await saveImageToFile(imageUrl, character.id || character.name);
+    logger.info("Character portrait generation completed successfully", { filePath });
+    return filePath;
   } catch (error) {
     logger.error("Error generating character portrait with Freepik", { error: error instanceof Error ? error.message : String(error) });
     throw new Error(`Failed to generate character portrait: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+}
+
+// Helper function to save image to file system
+async function saveImageToFile(imageUrl: string, characterId: string): Promise<string> {
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  
+  // Create uploads directory if it doesn't exist
+  const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'portraits');
+  await fs.mkdir(uploadsDir, { recursive: true });
+  
+  // Generate unique filename
+  const fileName = `${characterId}_${Date.now()}.jpg`;
+  const filePath = path.join(uploadsDir, fileName);
+  
+  // Download and save the image
+  const response = await fetch(imageUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to download image: ${response.status}`);
+  }
+  
+  const buffer = await response.arrayBuffer();
+  await fs.writeFile(filePath, Buffer.from(buffer));
+  
+  // Return the relative path that can be used in the web app
+  return `/uploads/portraits/${fileName}`;
 }
 
 export async function parseCharacterDescription(text: string, context: any = {}) {

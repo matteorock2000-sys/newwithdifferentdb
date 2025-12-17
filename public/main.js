@@ -186,7 +186,11 @@ window.onkeydown = function(e) {
     function after_roll(notation) {
         //console.log('after_roll notation: ' + JSON.stringify(notation));
         if(notation.result[0] < 0) {
+            console.warn('[main.js] Dice result is negative, treating as off-table');
             elem.result.innerHTML = "Oops, your dice fell off the table. <br> Refresh and roll again."
+        } else if(notation.result[0] === undefined || isNaN(notation.result[0])) {
+            console.warn('[main.js] Dice result is invalid, using fallback value');
+            elem.result.innerHTML = "Invalid dice result. Please try rolling again."
         } else {
             elem.result.innerHTML = notation.resultString;
         }

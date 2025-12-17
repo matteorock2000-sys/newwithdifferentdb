@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.14.0",
+    "@heyputer/puter.js": "^2.2.2",
     "@remix-run/node": "^2.8.1",
     "@remix-run/react": "^2.8.1",
     "@remix-run/serve": "^2.8.1",
@@ -30,13 +31,14 @@
     "logger": "^0.0.1",
     "lru-cache": "^10.2.2",
     "node-fetch": "^3.3.2",
+    "punycode": "^2.3.1",
     "quaternion": "^2.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "remix": "^2.17.2",
     "remix-utils": "^7.5.0",
-    "uuid": "^13.0.0",
-    "terser": "^5.27.0"
+    "terser": "^5.27.0",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@remix-run/dev": "^2.8.1",
@@ -56,7 +58,7 @@
     "eslint-plugin-react-hooks": "^4.6.0",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.3",
-    "typescript": "^5.1.6",
+    "typescript": "^5.9.3",
     "vite": "^5.1.0",
     "vite-tsconfig-paths": "^4.2.1"
   }

@@ -5,6 +5,7 @@ import { logger } from "~/utils/logger";
 import { requireUser } from "~/services/auth.server"; // Assuming auth.server exports requireUser
 import { calculateInactivityCleanup, persistRoomUpdate, cleanupRoomsBeforeFetch } from "./roomCleanup.server"; // Import cleanup functions
 import { createApiErrorResponse, createErrorResponse } from "~/utils/errors";
+import { saveTemporaryPartySetup, clearTemporaryPartySetup } from "./db.server"; // Import saveTemporaryPartySetup function
 // 
 
 // DBRoom and RoomParticipant types are now in ~/types.ts
@@ -208,7 +209,34 @@ export async function handleRoomAction(request: Request, options: HandleRoomActi
             }
         } while (await getRoomByCode(code));
         
+        // Parse and save room slots (party setup)
+        const roomSlotsJson = formData.get("roomSlots")?.toString();
+        let setupSlots: PlayerSlot[] = [];
+        if (roomSlotsJson) {
+            try {
+                setupSlots = JSON.parse(roomSlotsJson);
+                logger.debug(`[roomCore.server] Parsed roomSlots:`, { setupSlots });
+                
+                // Save the temporary party setup to the database
+                await saveTemporaryPartySetup(userId, setupSlots);
+                logger.debug(`[roomCore.server] Saved temporary party setup for user:`, { userId });
+            } catch (error) {
+                logger.warn(`[roomCore.server] Failed to parse roomSlots, using empty array:`, { error });
+            }
+        }
+        
         // Create room
+        const username = formData.get("username")?.toString() || "Unknown";
+        
+        // Create participants array with the room creator
+        const participants = setupSlots
+            .filter(slot => slot.characterId)
+            .map(slot => ({
+                userId: userId,
+                characterId: slot.characterId,
+                username: username
+            }));
+        
         const { data, error } = await db.from("rooms").insert({
             name: roomName,
             code: code,
@@ -216,14 +244,14 @@ export async function handleRoomAction(request: Request, options: HandleRoomActi
             user_id: userId,
             host_id: userId,
             status: "lobby",
-            participants: [],
-            setup_slots: [],
-            active_slots: 0,
+            participants: participants,
+            setup_slots: setupSlots,
+            active_slots: setupSlots.length,
             maxplayers: 4
         }).select().single();
         
         if (error) {
-            logger.error(`[roomCore.server] Error creating room:`, { error });
+            logger.error(`[roomCore.server] Error creating room:`, { error, roomName, code, userId, setupSlots });
             return json(
               {
                 success: false,
@@ -239,7 +267,17 @@ export async function handleRoomAction(request: Request, options: HandleRoomActi
             );
         }
         
-        return redirect(`/game?roomCode=${code}`);
+        logger.debug(`[roomCore.server] Room created successfully:`, { data, code });
+        await clearTemporaryPartySetup(userId); // Clear temporary party setup after successful room creation
+        // Return success response with redirect URL for fetcher
+        return json(
+          {
+            success: true,
+            redirectUrl: `/game?roomCode=${code}`,
+            roomCode: code
+          },
+          { status: 200 }
+        );
     }
     
     if (intent === "joinRoom") {
@@ -251,8 +289,118 @@ export async function handleRoomAction(request: Request, options: HandleRoomActi
         if (!room) {
             return createApiErrorResponse(new Error("Room not found"), "Room not found");
         }
+
+        // Check if user is already in the room
+        const isUserAlreadyInRoom = room.participants.some(p => p.userId === userId);
+        if (isUserAlreadyInRoom) {
+            logger.debug(`[roomCore.server] User ${userId} is already in room ${roomCode}, redirecting.`);
+            return json(
+              {
+                success: true,
+                redirectUrl: `/game?roomCode=${roomCode}`,
+                roomCode: roomCode
+              },
+              { status: 200 }
+            );
+        }
         
-        return redirect(`/game?roomCode=${roomCode}`);
+        // Check if room is full
+        if (room.participants.length >= room.maxplayers) {
+            return createApiErrorResponse(new Error("Room is full"), "This room is at maximum capacity");
+        }
+        
+        // Get user's party setup from form
+        const roomSlotsJson = formData.get("roomSlots")?.toString();
+        if (!roomSlotsJson) {
+            return createApiErrorResponse(new Error("Missing party setup"), "Your party setup was not provided.");
+        }
+        
+        let userSlots: PlayerSlot[];
+        try {
+            userSlots = JSON.parse(roomSlotsJson);
+        } catch (error) {
+            logger.warn(`[roomCore.server] Failed to parse roomSlots from user:`, { error });
+            return createApiErrorResponse(new Error("Invalid party setup format"), "Your party setup is invalid.");
+        }
+
+        // Find character to join with (first Human slot with a character)
+        const characterSlotToJoin = userSlots.find(s => s.type === 'Human' && s.characterId);
+
+        if (!characterSlotToJoin || !characterSlotToJoin.characterId) {
+            return createApiErrorResponse(new Error("No character to join with"), "You must have a character selected in your party to join a room.");
+        }
+
+        const username = formData.get("username")?.toString() || "Unknown";
+
+        // Check if character is already in the room
+        const isCharacterAlreadyInRoom = room.setup_slots.some(s => s.characterId === characterSlotToJoin.characterId);
+        if (isCharacterAlreadyInRoom) {
+            logger.warn(`[roomCore.server] Character ${characterSlotToJoin.characterId} is already in room ${roomCode}.`);
+             return createApiErrorResponse(new Error("Character already in room"), "This character is already in the room.");
+        }
+
+        // Find an available slot in the room
+        const availableSlotIndex = room.setup_slots.findIndex(s => s.type === 'None' || !s.characterId);
+
+        if (availableSlotIndex === -1) {
+            return createApiErrorResponse(new Error("Room is full"), "This room is full, so you cannot join at the moment.");
+        }
+
+        // Create the new setup_slots array
+        const newSetupSlots = [...room.setup_slots];
+        newSetupSlots[availableSlotIndex] = {
+            ...characterSlotToJoin,
+            userId: userId,
+            username: username,
+            isReady: true // Assume ready on join
+        };
+
+        // Update participants
+        const newParticipants = newSetupSlots
+            .filter(slot => slot.characterId && slot.userId)
+            .map(slot => ({
+                userId: slot.userId!,
+                characterId: slot.characterId!,
+                lastActive: new Date().toISOString()
+            }));
+
+        // Update the room
+        const { error } = await db.from("rooms").update({
+            setup_slots: newSetupSlots,
+            active_slots: newSetupSlots.filter(slot => slot.type === 'Human' || slot.type === 'AI').length,
+            participants: newParticipants,
+            updated_at: new Date().toISOString()
+        }).eq("code", roomCode);
+
+        if (error) {
+            logger.error(`[roomCore.server] Error updating room slots:`, { error, roomCode, newSetupSlots });
+            return json(
+              {
+                success: false,
+                error: {
+                  code: "DATABASE_ERROR",
+                  message: "Failed to update room slots",
+                  userMessage: "Could not update the room. Please try again.",
+                  recoverySteps: ["Try joining the room again", "Contact support if issue persists"],
+                  retryable: true,
+                },
+              },
+              { status: 500 }
+            );
+        }
+
+        logger.debug(`[roomCore.server] Room slots updated successfully for user join:`, { roomCode, newSetupSlots });
+        
+        await clearTemporaryPartySetup(userId); // Clear temporary party setup after successful room join
+        
+        return json(
+          {
+            success: true,
+            redirectUrl: `/game?roomCode=${roomCode}`,
+            roomCode: roomCode
+          },
+          { status: 200 }
+        );
     }
     
     return createApiErrorResponse(new Error("Invalid intent"), "Invalid action intent");
@@ -331,7 +479,15 @@ export async function updateParticipantActivity(roomCode: string, userId: string
 
     if (shouldRunCleanup) {
         // Perform inactivity cleanup and get updated room state
-        const { updatedRoom: cleanedRoom, needsDBUpdate: cleanupNeedsUpdate } = calculateInactivityCleanup(room, userId);
+        const cleanupResult = await calculateInactivityCleanup(room, userId);
+
+        if (!cleanupResult || !cleanupResult.updatedRoom) {
+            logger.error('[roomCore.server] Inactivity cleanup failed to return a valid room object.');
+            // Fallback to the initial room state to avoid a crash
+            return room;
+        }
+
+        const { updatedRoom: cleanedRoom, needsDBUpdate: cleanupNeedsUpdate } = cleanupResult;
         
         // Apply participant updates on top of cleaned participants
         const cleanedParticipants = cleanedRoom.participants || [];

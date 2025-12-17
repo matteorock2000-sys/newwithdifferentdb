@@ -1,0 +1,22 @@
+{
+  "custom_models": [
+    {
+      "model_display_name": "Kwaipilot",
+      "model": "kwaipilot/kat-coder-pro:free",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "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",
+      "provider": "generic-chat-completion-api",
+      "max_tokens": 32000
+    },
+    {
+      "model_display_name": "Puter.js Agent (Local)",
+      "model": "puter-js-local",
+      "base_url": "https://api.puter.com/v1",
+      "api_key": "NO_API_KEY_REQUIRED",
+      "provider": "generic-chat-completion-api",
+      "max_tokens": 32000,
+      "description": "Local Puter.js integration - requires browser environment",
+      "notes": "This model is for documentation only. Puter.js requires a browser environment and cannot be used directly with Droid CLI. Use with web applications only."
+    }
+  ]
+}

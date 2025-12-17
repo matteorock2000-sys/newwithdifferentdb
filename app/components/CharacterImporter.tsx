@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import type { Character } from '~/types';
 import { useFetcher } from '@remix-run/react';
+import { logger } from '~/utils/logger';
+import { useGlobalToast } from '~/utils/toast';
 
 interface ImportResponse {
   success: boolean;
@@ -18,20 +20,21 @@ export default function CharacterImporter({ onCharacterParsed, onClose }: Charac
   const [parsedCharacter, setParsedCharacter] = useState<Partial<Character> | null>(null);
   const fetcher = useFetcher<ImportResponse>();
   const formRef = useRef<HTMLFormElement>(null);
+  const { showToast } = useGlobalToast();
 
   useEffect(() => {
     if (fetcher.data) {
       if (fetcher.data.success && fetcher.data.character) {
-        console.log("CharacterImporter: Successfully received parsed character via fetcher.");
+        logger.debug('Successfully received parsed character via fetcher');
         setParsedCharacter(fetcher.data.character);
       } else if (fetcher.data.error) {
-        console.error("CharacterImporter: Import failed with error:", fetcher.data.error);
+        logger.error('Import failed with error', { error: fetcher.data.error });
         // Display the error message to the user
-        alert(`Import failed: ${fetcher.data.error}`);
+        showToast(`Import failed: ${fetcher.data.error}`, 'error');
         setParsedCharacter(null); // Ensure parsedCharacter is null on error
       } else {
-        console.warn("CharacterImporter: Fetcher data received but not in expected format:", fetcher.data);
-        alert("Import failed: Unexpected response format.");
+        logger.warn('Fetcher data received but not in expected format', { data: fetcher.data });
+        showToast("Import failed: Unexpected response format.", 'error');
         setParsedCharacter(null); // Ensure parsedCharacter is null on unexpected format
       }
     }
@@ -40,7 +43,7 @@ export default function CharacterImporter({ onCharacterParsed, onClose }: Charac
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (description.trim() === '') {
-      alert('Please enter a character description to import.');
+      showToast('Please enter a character description to import.', 'error');
       return;
     }
 
@@ -50,7 +53,7 @@ export default function CharacterImporter({ onCharacterParsed, onClose }: Charac
     // Sanitize description to remove non-ASCII characters that might cause issues in form submission or parsing
     const sanitizedDescription = description.replace(/[^\x00-\x7F\n\r\t ]/g, ''); 
     
-    console.log("CharacterImporter: Submitting form to /api/character/import using useFetcher.");
+    logger.debug('Submitting form to /api/character/import using useFetcher');
 
     const formData = new FormData();
     formData.append('description', sanitizedDescription);
@@ -64,14 +67,14 @@ export default function CharacterImporter({ onCharacterParsed, onClose }: Charac
     // Although type="button" is set, keep preventDefault for maximum robustness against browser quirks
     event.preventDefault(); 
     if (parsedCharacter) {
-      console.log("CharacterImporter: Using parsed character and closing importer.");
+      logger.debug('Using parsed character and closing importer');
       onCharacterParsed(parsedCharacter);
       onClose();
     }
   };
 
   const handleCancelPreview = () => {
-    console.log("CharacterImporter: Cancelling preview.");
+    logger.debug('Cancelling preview');
     setParsedCharacter(null);
     setDescription(''); // Also clear the description input
   };

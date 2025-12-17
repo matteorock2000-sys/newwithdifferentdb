@@ -5,6 +5,8 @@ import { getSession } from '~/sessions';
 import { getAllCharacters } from '~/services/characterCache.server';
 import type { Character } from '~/types';
 import NewCharacterForm from '~/components/NewCharacterForm';
+import { logger } from '~/utils/logger';
+import { useGlobalToast } from '~/utils/toast';
 
 // --- Placeholder Data ---
 const CLASSES = ['Barbarian', 'Bard', 'Cleric', 'Druid', 'Fighter', 'Monk', 'Paladin', 'Ranger', 'Rogue', 'Sorcerer', 'Warlock', 'Wizard'];
@@ -42,17 +44,21 @@ export default function CharacterNew() {
   const [selectedClass, setSelectedClass] = useState(CLASSES[0]);
   const [selectedRace, setSelectedRace] = useState(RACES[0]);
   const [selectedBackground, setSelectedBackground] = useState(BACKGROUNDS[0]);
+  const { showToast } = useGlobalToast();
 
   // Effect to handle showing the form after successful AI generation
   useEffect(() => {
-    console.log('CharacterNew: Generation Fetcher State:', generationFetcher.state, 'Data:', generationFetcher.data);
+    logger.debug('Generation Fetcher State', { 
+      state: generationFetcher.state,
+      data: generationFetcher.data
+    });
     if (generationFetcher.data && generationFetcher.state === 'idle') {
       if (generationFetcher.data.type === 'success' && generationFetcher.data.data) {
         const { characterData } = generationFetcher.data.data;
         setFormInitialData(characterData);
         setShowForm(true);
       } else if (generationFetcher.data.type === 'error') {
-        alert(`Generation Error: ${generationFetcher.data.error}`);
+        showToast(`Generation Error: ${generationFetcher.data.error}`, 'error');
       }
       // Clear fetcher data by setting a new key to force a fresh fetcher instance
       setFetcherKey(prev => prev + 1);
@@ -68,14 +74,18 @@ export default function CharacterNew() {
 
   const handleGenerateRandom = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('CharacterNew: --- handleGenerateRandom clicked! ---');
-    console.log(`Submitting for generation: Class=${selectedClass}, Race=${selectedRace}, Background=${selectedBackground}`);
+    logger.debug('handleGenerateRandom clicked');
+    logger.debug('Submitting for generation', { 
+      class: selectedClass,
+      race: selectedRace,
+      background: selectedBackground
+    });
     
     generationFetcher.submit(
       { generateFull: 'true', class: selectedClass, race: selectedRace, background: selectedBackground }, // Pass selected parameters to server
       { method: 'post', action: '/api/character.create-ai' }
     );
-    console.log('CharacterNew: Fetcher submitted.');
+    logger.debug('Fetcher submitted');
   };
 
   const handleManualCreation = () => {
@@ -88,7 +98,7 @@ export default function CharacterNew() {
   };
 
   const handleImportDefault = () => {
-    alert('Importing default characters...');
+    showToast('Importing default characters...', 'info');
     navigate('/character.manage');
   };
 

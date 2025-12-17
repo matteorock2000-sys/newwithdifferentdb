@@ -1,6 +1,7 @@
 /**
  * Utility functions for rolling dice.
  */
+import type { AbilityScores } from "~/types";
 
 /**
  * Calculates the D&D 5e ability modifier from a score.

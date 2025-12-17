@@ -23,7 +23,12 @@
  * - adding 'd9' option (d10 to be added to d100 properly)
  */
 
-const DICE = (function() {
+// Check if DICE is already defined to prevent redeclaration errors
+if (typeof window !== 'undefined' && window.DICE) {
+    console.log('[dice.js] DICE object already exists, skipping initialization');
+} else {
+    // Use window.DICE directly to avoid const redeclaration issues
+    window.DICE = (function() {
     var that = {};
 
     var vars = { //todo: make these configurable on init
@@ -798,18 +803,39 @@ const DICE = (function() {
     function get_dice_value(dice) {
         var vector = new THREE.Vector3(0, 0, dice.dice_type == 'd4' ? -1 : 1);
         var closest_face, closest_angle = Math.PI * 2;
+        var valid_faces_found = 0;
+        
         for (var i = 0, l = dice.geometry.faces.length; i < l; ++i) {
             var face = dice.geometry.faces[i];
             if (face.materialIndex == 0) continue;
+            
+            valid_faces_found++;
             var angle = face.normal.clone().applyQuaternion(dice.body.quaternion).angleTo(vector);
             if (angle < closest_angle) {
                 closest_angle = angle;
                 closest_face = face;
             }
         }
-        var matindex = closest_face ? closest_face.materialIndex - 1 : -1; //todo: bug thrown here, sometimes closest_face = undefined
+        
+        // If no valid faces found or closest_face is undefined, return a fallback value
+        if (!closest_face || valid_faces_found === 0) {
+            console.warn('[dice.js] No valid face found for dice type:', dice.dice_type, 'Using fallback value 1');
+            console.warn('[dice.js] Dice geometry faces:', dice.geometry.faces.length, 'Valid faces found:', valid_faces_found);
+            console.warn('[dice.js] Dice body position:', dice.body.position, 'quaternion:', dice.body.quaternion);
+            return 1; // Fallback to 1 instead of -1
+        }
+        
+        var matindex = closest_face.materialIndex - 1;
         if (dice.dice_type == 'd100') matindex *= 10;
         if (dice.dice_type == 'd10' && matindex == 0) matindex = 10;
+        
+        // Additional validation to ensure result is within expected range
+        var dice_range = CONSTS.dice_face_range[dice.dice_type];
+        if (matindex < dice_range[0] || matindex > dice_range[1]) {
+            console.warn('[dice.js] Dice result out of range:', matindex, 'for dice type:', dice.dice_type, 'Using fallback value 1');
+            return 1;
+        }
+        
         return matindex;
     }
 
@@ -857,5 +883,8 @@ const DICE = (function() {
         };
     }
 
-    return that;
-}());
+        return that;
+    }());
+    
+    console.log('[dice.js] DICE object initialized and exported to window.DICE');
+}

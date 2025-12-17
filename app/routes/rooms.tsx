@@ -2,7 +2,7 @@ import { json, LoaderFunction, ActionFunction } from "@remix-run/node";
 import { useLoaderData, useFetcher, Form, Link, useNavigate } from "@remix-run/react";
 import { useState, useEffect, useMemo } from "react";
 import { requireUser } from "~/services/auth.server";
-import { getCharactersForUser, getAndClearTemporaryPartySetup, db } from "~/services/db.server";
+import { getCharactersForUser, getTemporaryPartySetup, getAndClearTemporaryPartySetup, clearTemporaryPartySetup, db } from "~/services/db.server";
 import { getSession, commitSession, cleanupSession } from "~/sessions";
 import type { Character, User, PlayerSlot, Room } from "~/types";
 import PlayerSetupSlot from "~/components/PlayerSetupSlot";
@@ -43,62 +43,94 @@ export const loader: LoaderFunction = async ({ request }) => {
   // --- START: Database-based Party Setup Retrieval ---
   let initialPartySlots: PlayerSlot[] = DEFAULT_SLOTS;
   
-  // Attempt to retrieve temporary party setup from the database
-  const temporaryParty = await getAndClearTemporaryPartySetup(user.id);
-  const userPartyData = temporaryParty || [];
+  // First, check if user is already in any active rooms
+  const userInRoom = activeRooms.find(room => 
+    room.participants.some(p => p.userId === user.id)
+  );
   
-  if (temporaryParty && Array.isArray(temporaryParty) && temporaryParty.length === 4) {
-    // Basic structural check
-    const isValidParty = temporaryParty.every(slot => 
-        typeof slot === 'object' && slot !== null && 
-        ('type' in slot) && ('characterId' in slot) && ('isReady' in slot)
-    );
-
-    if (isValidParty) {
-        // Populate characterName for display/logging if missing
-        initialPartySlots = (temporaryParty as PlayerSlot[]).map(slot => {
-            if (slot.characterId && slot.type !== 'None') {
-                return {
-                    ...slot,
-                    characterName: characterMap[slot.characterId] || slot.characterName,
-                };
-            }
-            return slot;
-        });
-        
-        // Only log when party setup is actually found and used
-        if (userPartyData.length > 0) {
-            logger.debug('Found valid party setup in DB. Using it as initial slots', { 
-              partyData: userPartyData
-            });
-            
-            // NEW LOGGING: List character names
-            const characterNames = initialPartySlots
-                .filter(slot => slot.type !== 'None' && slot.characterName)
-                .map(slot => slot.characterName);
-                
-            if (characterNames.length > 0) {
-                logger.debug('Characters in party', { characterNames });
-            }
+  if (userInRoom) {
+    // User is already in a room, use the room's setup_slots
+    logger.debug('User is already in room, using room setup', { 
+      userId: user.id,
+      roomId: userInRoom.id,
+      roomSetup: userInRoom.setup_slots
+    });
+    
+    if (userInRoom.setup_slots && Array.isArray(userInRoom.setup_slots)) {
+      initialPartySlots = userInRoom.setup_slots.map(slot => {
+        if (slot.characterId && slot.type !== 'None') {
+          return {
+            ...slot,
+            characterName: characterMap[slot.characterId] || slot.characterName,
+          };
         }
-        // END NEW LOGGING
-
-    } else {
-        logger.debug('Found party data in DB but format is invalid. Using default slots', { 
-          partyData: userPartyData
-        });
+        return slot;
+      });
+      
+      // Log characters in the room
+      const characterNames = initialPartySlots
+        .filter(slot => slot.type !== 'None' && slot.characterName)
+        .map(slot => slot.characterName);
+        
+      if (characterNames.length > 0) {
+        logger.debug('Characters in room', { characterNames });
+      }
     }
   } else {
-    // Only log this once per user session, not on every poll
-    logger.debug('No temporary party setup found in DB. Using default slots', { 
-      userId: user.id
-    });
+    // User is not in any room, check for temporary party setup
+    // Attempt to retrieve temporary party setup from the database
+    const temporaryParty = await getAndClearTemporaryPartySetup(user.id);
+    const userPartyData = temporaryParty || [];
+    
+    if (temporaryParty && Array.isArray(temporaryParty) && temporaryParty.length === 4) {
+      // Basic structural check
+      const isValidParty = temporaryParty.every(slot => 
+          typeof slot === 'object' && slot !== null && 
+          ('type' in slot) && ('characterId' in slot) && ('isReady' in slot)
+      );
+
+      if (isValidParty) {
+          // Populate characterName for display/logging if missing
+          initialPartySlots = (temporaryParty as PlayerSlot[]).map(slot => {
+              if (slot.characterId && slot.type !== 'None') {
+                  return {
+                      ...slot,
+                      characterName: characterMap[slot.characterId] || slot.characterName,
+                  };
+              }
+              return slot;
+          });
+          
+          // Only log when party setup is actually found and used
+          if (userPartyData.length > 0) {
+              logger.debug('Found valid party setup in DB. Using it as initial slots', { 
+                partyData: userPartyData
+              });
+              
+              // NEW LOGGING: List character names
+              const characterNames = initialPartySlots
+                  .filter(slot => slot.type !== 'None' && slot.characterName)
+                  .map(slot => slot.characterName);
+                  
+              if (characterNames.length > 0) {
+                  logger.debug('Characters in party', { characterNames });
+              }
+          }
+          // END NEW LOGGING
+
+      } else {
+          logger.debug('Found party data in DB but format is invalid. Using default slots', { 
+            partyData: userPartyData
+          });
+      }
+    }
   }
 
   // --- END: Database-based Party Setup Retrieval ---
 
   // --- START: Fetch Host Usernames ---
-  const hostIds = [...new Set(activeRooms.map(room => room.host_id))];
+  // --- START: Fetch Host Usernames ---
+  const hostIds = [...new Set(activeRooms.map(room => room.host_id))].filter((id): id is string => !!id);
   
   const { data: usersData, error: usersError } = await db
     .from('users')
@@ -142,7 +174,8 @@ export const action: ActionFunction = async ({ request }) => {
         const result = await handleRoomAction(request, { userId: user.id });
         logger.debug('Room action completed', { 
           userId: user.id.substring(0, 8),
-          result
+          resultStatus: result.status,
+          resultHeaders: Object.fromEntries(result.headers.entries())
         });
         return result;
     } catch (error) {
@@ -177,6 +210,36 @@ const { user, characters, initialPartySlots }  = loaderData;
       showToast(loaderData.error, "error");
     }
   }, [loaderData.error, showToast]);
+
+  // Handle fetcher response for room creation/joining
+  useEffect(() => {
+    if (fetcher.data && fetcher.state === 'idle') {
+      // Check if the response is a success with redirect URL
+      if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data) {
+        const response = fetcher.data as any;
+        if (response.success && response.redirectUrl) {
+          // Navigate to the game page
+          window.location.href = response.redirectUrl;
+          return;
+        }
+      }
+      
+      // Check if the response is an error object (from createApiErrorResponse)
+      if (fetcher.data && typeof fetcher.data === 'object' && 'error' in fetcher.data && typeof fetcher.data.error === 'object') {
+        const errorResponse = fetcher.data.error as any;
+        if (errorResponse.userMessage) {
+          showToast(errorResponse.userMessage, 'error');
+        } else if (errorResponse.message) {
+          showToast(`Error: ${errorResponse.message}`, 'error');
+        } else {
+          showToast('An unknown error occurred.', 'error');
+        }
+      } else if (fetcher.data && typeof fetcher.data === 'object' && 'error' in fetcher.data && typeof fetcher.data.error === 'string') {
+         // Fallback for simple string errors (like the party size error)
+         showToast(`Error: ${fetcher.data.error}`, 'error');
+      }
+    }
+  }, [fetcher.data, fetcher.state, showToast]);
   // Use state for dynamic data (polling targets)
   const [activeRooms, setActiveRooms] = useState(loaderData.activeRooms);
   const [hostUsernames, setHostUsernames] = useState(loaderData.hostUsernames);
@@ -227,20 +290,7 @@ const { user, characters, initialPartySlots }  = loaderData;
     setHostUsernames(loaderData.hostUsernames);
   }, [loaderData.activeRooms, loaderData.hostUsernames]);
 
-  // Handle action errors (e.g., join validation failure)
-  useEffect(() => {
-    if (fetcher.data && 'error' in fetcher.data && typeof fetcher.data.error === 'string') {
-        const errorMessage = fetcher.data.error;
-        
-        // Check for the specific party size error
-        if (errorMessage.startsWith("not enough slots for this party:")) {
-            showToast(`Join Failed: ${errorMessage}`, 'error');
-        } else {
-            // Handle other errors (Room not found, must select character, etc.)
-            showToast(`Error: ${errorMessage}`, 'error');
-        }
-    }
-  }, [fetcher.data, showToast]);
+
 
 
   const handleSlotChange = (slotIndex: number, newPlayerSlot: PlayerSlot) => {
@@ -306,7 +356,7 @@ const { user, characters, initialPartySlots }  = loaderData;
   // Room can be created if all conditions met
   const canCreateRoom = allActiveSlotsReady && hostCharacterReady;
   
-  const isCreating = fetcher.state === 'submitting' && fetcher.formData?.get('intent') === 'create';
+  const isCreating = fetcher.state === 'submitting' && fetcher.formData?.get('intent') === 'createRoom';
 
   const handleRoomFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     if (!canCreateRoom) {
@@ -321,131 +371,260 @@ const { user, characters, initialPartySlots }  = loaderData;
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white p-4 lg:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-800 text-white">
       
-      {/* Back to Main Menu Button */}
-      <div className="max-w-4xl mx-auto mb-6">
-        <Link 
-          to="/" 
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-gray-600 hover:bg-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition duration-150 ease-in-out"
-        >
-          &larr; Back to Main Menu
-        </Link>
+      {/* Header Section */}
+      <div className="max-w-7xl mx-auto px-4 py-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <Link 
+              to="/" 
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-gray-700 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition duration-150 ease-in-out"
+            >
+              ← Back to Main Menu
+            </Link>
+            <div className="hidden md:block text-2xl text-gray-400">|</div>
+            <div className="text-sm text-gray-400">Active Lobbies: {activeRooms.length}</div>
+          </div>
+          
+          <div className="text-center flex-1">
+            <h1 className="text-4xl md:text-5xl font-medieval text-red-500">Room Selection</h1>
+            <p className="text-gray-400 mt-2">Assemble your party and choose your adventure</p>
+          </div>
+          
+          <div className="w-24"></div>
+        </div>
       </div>
 
-      <h1 className="text-6xl font-medieval text-red-500 text-center mb-12">Room Selection</h1>
-
-      <div className="max-w-4xl mx-auto grid grid-cols-1 gap-8">
-        
-        {/* Active Rooms List */}
-        <div className="bg-gray-800 p-6 rounded-xl shadow-2xl border border-gray-600">
-          <h2 className="text-3xl font-medieval text-red-400 mb-6">Active Lobbies ({activeRooms.length})</h2>
-          {activeRooms.length === 0 ? (
-            <p className="text-gray-400">No active rooms found. Be the first to create one!</p>
-          ) : (
-            <ul className="space-y-3">
-              {activeRooms.map(room => (
-                <li key={room.id} className="bg-gray-700 p-3 rounded flex justify-between items-center">
-                  <div>
-                    <p className="font-bold text-lg text-white">{room.name}</p>
-                    {/* Display host username instead of ID, and remove code display */}
-                    {/* FIX: Use optional chaining to prevent TypeError if hostUsernames is undefined during hydration */}
-                    <p className="text-sm text-gray-400">Host: {hostUsernames?.[room.host_id] || room.host_id}</p>
-                    {/* NEW: Display active slots count */}
-                    <p className="text-sm text-gray-400 mt-1">Active Slots: {room.activeSlotsCount}/{room.maxPlayers}</p>
-                  </div>
-                  {/* Join button here (requires character selection logic, omitted for now) */}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        {/* Room Creation Panel */}
-        <div className="bg-gray-800 p-6 rounded-xl shadow-2xl border border-red-700">
-          <h2 className="text-3xl font-medieval text-red-400 mb-6">Create New Room</h2>
+      <div className="max-w-7xl mx-auto px-4 pb-8">
+        <div className="grid grid-cols-1 gap-8">
           
-          <Form method="post" onSubmit={handleRoomFormSubmit} className="space-y-4">
-            <input type="hidden" name="intent" value="create" />
-            <input type="hidden" name="roomSlots" value={JSON.stringify(partySlots)} />
-
-            <div>
-              <label htmlFor="roomName" className="block text-gray-300 mb-2">Room Name:</label>
-              <input
-                id="roomName"
-                name="roomName"
-                type="text"
-                value={roomName}
-                onChange={(e) => setRoomName(e.target.value)}
-                className="w-full p-3 bg-gray-700 text-white rounded border border-gray-600 focus:border-red-500"
-                required
-              />
+          {/* Active Rooms List */}
+          <div className="space-y-6">
+            <div className="bg-gray-800/80 backdrop-blur-sm p-6 rounded-2xl shadow-2xl border border-gray-700">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-medieval text-red-400">Active Lobbies</h2>
+                <div className="flex items-center space-x-3">
+                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-sm text-gray-400">{activeRooms.length} available</span>
+                </div>
+              </div>
+              
+              {activeRooms.length === 0 ? (
+                <div className="text-center py-8">
+                  <div className="text-6xl mb-4">🏰</div>
+                  <p className="text-gray-400 text-lg">No active rooms found. Be the first to create one!</p>
+                </div>
+              ) : (
+                <div className="space-y-4 max-h-96 overflow-y-auto">
+                  {activeRooms.map(room => (
+                    <div key={room.id} className="bg-gray-700/60 rounded-xl p-4 border border-gray-600 hover:border-gray-500 transition-all duration-200">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-3 mb-2">
+                            <h3 className="font-bold text-xl text-white">{room.name}</h3>
+                            <span className="px-2 py-1 bg-gray-600 text-gray-200 text-xs rounded-full">Room Code: {room.code}</span>
+                          </div>
+                          <div className="flex items-center space-x-4 text-sm text-gray-400">
+                            <span>Host: {hostUsernames?.[room.host_id] || room.host_id}</span>
+                            <span>•</span>
+                            <span>Players: {room.participants.length}/{room.maxPlayers}</span>
+                            <span>•</span>
+                            <span>Status: {room.status}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                          <div className="text-right text-sm text-gray-400">
+                            <div>Available Slots</div>
+                            <div className="font-bold text-white">{room.maxPlayers - room.participants.length}</div>
+                          </div>
+                          <Form method="post" onSubmit={(e) => {
+                              if (!canCreateRoom) {
+                                  e.preventDefault();
+                                  showToast("Please ensure at least one Human character is selected and ready, and all active slots (Human/AI) are marked as Ready.", "error");
+                                  return;
+                              }
+                              showToast("Joining room...", "info");
+                              // Use fetcher to submit the form
+                              fetcher.submit(e.currentTarget);
+                            }} className="ml-2">
+                            <input type="hidden" name="intent" value="joinRoom" />
+                            <input type="hidden" name="roomCode" value={room.code} />
+                            <input type="hidden" name="roomSlots" value={JSON.stringify(partySlots)} />
+                            <input type="hidden" name="username" value={user.username} />
+                            <button
+                              type="submit"
+                              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition duration-200"
+                            >
+                              Join
+                            </button>
+                          </Form>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
+          </div>
 
-            <h3 className="text-xl font-bold text-gray-300 mt-6 mb-4">Party Configuration (Host Setup)</h3>
-            <div className="grid grid-cols-2 gap-4">
+          {/* Party Configuration - Now below Active Lobbies */}
+          <div className="space-y-6">
+            
+            {/* Party Configuration */}
+            <div className="bg-gray-800/80 backdrop-blur-sm p-6 rounded-2xl shadow-2xl border border-red-700/50">
+              <h2 className="text-xl font-medieval text-red-400 mb-3">Party Configuration</h2>
+              <p className="text-gray-400 text-sm mb-3">Select your characters and get ready for adventure</p>
+              
+              {/* Party Slots - Updated layout for better character card display */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch mb-6">
                 {partySlots.map((slot, index) => (
-                    <PlayerSetupSlot 
-                        key={index}
-                        slotIndex={index} 
-                        playerSlot={slot} 
-                        allCharacters={characters}
-                        allSlots={partySlots}
-                        onSlotChange={handleSlotChange}
-                        onEditCharacter={handleEditCharacter} // Redirects to dashboard
-                        onDeleteCharacter={handleDeleteCharacter} // Alerts user
-                        onToggleReady={handleToggleReady} // Local state update
-                        showManagementButtons={false} // <-- CRITICAL: Hide Edit/Delete in Room Setup
-                        currentUserId={user.id} // <-- Pass currentUserId for ownership detection
-                        maxPlayers={4} // Maximum players per room
-                        roomStatus="lobby" // Current room status
+                  <div key={index} className="bg-gray-700/60 rounded-xl p-4 border border-gray-600 hover:border-gray-500 transition-all duration-200">
+                    <PlayerSetupSlot
+                slotIndex={index}
+                playerSlot={slot}
+                viewMode="rooms" 
+                      allCharacters={characters}
+                      allSlots={partySlots}
+                      onSlotChange={handleSlotChange}
+                      onEditCharacter={handleEditCharacter}
+                      onDeleteCharacter={handleDeleteCharacter}
+                      onToggleReady={handleToggleReady}
+                      showManagementButtons={false}
+                      currentUserId={user.id}
+                      currentUsername={user.username} // Added this line
+                      maxPlayers={4}
+                      roomStatus="lobby"
+                      isLobbyView={true}
                     />
+                  </div>
                 ))}
-            </div>
-            
-            <div className="pt-4">
-              <button
-                type="submit"
-                disabled={!canCreateRoom || isCreating}
-                className={`w-full py-3 px-4 rounded-lg text-xl font-bold transition duration-300
-                  ${canCreateRoom && !isCreating
-                    ? 'bg-green-600 hover:bg-green-500 text-white'
-                    : 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                  }`}
-              >
-                {isCreating ? 'Creating Room...' : 'Create Room & Enter Lobby'}
-              </button>
-            </div>
-          </Form>
-          
-          <div className="text-center my-4 text-gray-400">OR</div>
+              </div>
 
-          <Form method="post" className="space-y-4">
-            <input type="hidden" name="intent" value="join" />
-            {/* Pass the current party setup for joining */}
-            <input type="hidden" name="roomSlots" value={JSON.stringify(partySlots)} /> 
-            
-            <div>
-              <label htmlFor="joinCode" className="block text-gray-300 mb-2">Join By Code:</label>
-              <input
-                id="joinCode"
-                name="roomCode"
-                type="text"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                className="w-full p-3 bg-gray-700 text-white rounded border border-gray-600 focus:border-blue-500 uppercase tracking-widest text-center"
-                maxLength={6}
-                required
-              />
+              {/* Party Status */}
+              <div className="bg-gray-700/40 rounded-lg p-2 border border-gray-600">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-400">Active Characters:</span>
+                  <span className="font-bold text-white">{activeSlots.length}/4</span>
+                </div>
+                <div className="flex items-center justify-between text-sm mt-2">
+                  <span className="text-gray-400">Ready:</span>
+                  <span className={`font-bold ${allActiveSlotsReady ? 'text-green-400' : 'text-gray-400'}`}>
+                    {activeSlots.filter(slot => slot.isReady).length}/{activeSlots.length}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm mt-2">
+                  <span className="text-gray-400">Host Ready:</span>
+                  <span className={`font-bold ${hostCharacterReady ? 'text-green-400' : 'text-gray-400'}`}>
+                    {hostCharacterReady ? 'Yes' : 'No'}
+                  </span>
+                </div>
+              </div>
             </div>
-            {/* REMOVED: Join Character selection, as the partySlots hidden input handles the character selection */}
-            <button
-              type="submit"
-              className="w-full py-3 px-4 rounded-lg text-xl font-bold bg-blue-600 hover:bg-blue-500 text-white transition duration-300"
-            >
-              Join Room
-            </button>
-          </Form>
+
+            {/* Room Actions */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* Create Room */}
+              <div className="bg-gray-800/80 backdrop-blur-sm p-4 rounded-2xl shadow-2xl border border-green-700/50">
+                <h2 className="text-xl font-medieval text-green-400 mb-3">Create New Room</h2>
+                
+                <Form method="post" onSubmit={(e) => {
+                    if (!canCreateRoom) {
+                        e.preventDefault();
+                        showToast("Please ensure at least one Human character is selected and ready, and all active slots (Human/AI) are marked as Ready.", "error");
+                        return;
+                    }
+                    showToast("Creating room...", "info");
+                    // Use fetcher to submit the form
+                    fetcher.submit(e.currentTarget);
+                  }} className="space-y-4">
+                  <input type="hidden" name="intent" value="createRoom" />
+                  <input type="hidden" name="roomSlots" value={JSON.stringify(partySlots)} />
+                  <input type="hidden" name="username" value={user.username} />
+
+                  <div>
+                    <label htmlFor="roomName" className="block text-gray-300 mb-2">Room Name:</label>
+                    <input
+                      id="roomName"
+                      name="roomName"
+                      type="text"
+                      value={roomName}
+                      onChange={(e) => setRoomName(e.target.value)}
+                      className="w-full p-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 transition duration-200"
+                      required
+                    />
+                  </div>
+                  
+                  <div className="pt-4">
+                    <button
+                      type="submit"
+                      disabled={!canCreateRoom || isCreating}
+                      className={`w-full py-2 px-3 rounded-lg text-base font-bold transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98]
+                        ${canCreateRoom && !isCreating
+                          ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white shadow-lg hover:shadow-xl'
+                          : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                        }`}
+                    >
+                      {isCreating ? (
+                        <div className="flex items-center justify-center space-x-3">
+                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          <span>Creating Room...</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center space-x-3">
+                          <span>🚀 Create Room & Enter Lobby</span>
+                        </div>
+                      )}
+                    </button>
+                  </div>
+                </Form>
+              </div>
+
+              {/* Join Room */}
+              <div className="bg-gray-800/80 backdrop-blur-sm p-4 rounded-2xl shadow-2xl border border-blue-700/50">
+                <h2 className="text-xl font-medieval text-blue-400 mb-3">Join Existing Room</h2>
+                <p className="text-gray-400 text-sm mb-3">Enter a room code to join an existing adventure</p>
+
+                <Form method="post" onSubmit={(e) => {
+                    if (!canCreateRoom) {
+                        e.preventDefault();
+                        showToast("Please ensure at least one Human character is selected and ready, and all active slots (Human/AI) are marked as Ready.", "error");
+                        return;
+                    }
+                    showToast("Joining room...", "info");
+                    // Use fetcher to submit the form
+                    fetcher.submit(e.currentTarget);
+                  }} className="space-y-4">
+                  <input type="hidden" name="intent" value="joinRoom" />
+                  <input type="hidden" name="roomSlots" value={JSON.stringify(partySlots)} />
+                  <input type="hidden" name="username" value={user.username} /> 
+                  
+                  <div>
+                    <label htmlFor="joinCode" className="block text-gray-300 mb-2">Room Code:</label>
+                    <input
+                      id="joinCode"
+                      name="roomCode"
+                      type="text"
+                      value={joinCode}
+                      onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                      className="w-full p-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 uppercase tracking-widest text-center text-2xl font-bold transition duration-200"
+                      maxLength={6}
+                      required
+                      placeholder="ABC123"
+                    />
+                  </div>
+                  
+                  <button
+                    type="submit"
+                    className="w-full py-2 px-3 rounded-lg text-base font-bold bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] shadow-lg hover:shadow-xl"
+                  >
+                    🔓 Join Room
+                  </button>
+                </Form>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

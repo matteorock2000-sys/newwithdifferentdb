@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import type { DiceRollingState } from '~/types';
 import { useGlobalToast } from '~/utils/toast';
+import { logger } from '~/utils/logger';
 
 /** @jsxImportSource react */
 
@@ -140,14 +141,14 @@ export default function DiceRoller3D({
         ref={containerRef} 
         className={`w-full h-80 bg-blue-500 rounded-xl relative overflow-hidden border-4 transition-all duration-500 border-blue-500`}
         style={{ minHeight: '320px', height: '45vh', zIndex: 9998 }}
-        onClick={() => console.log('[DiceRoller3D] Container clicked!')}
+        onClick={() => logger.debug('[DiceRoller3D] Container clicked!')}
       >
         <iframe
           ref={diceIframeRef}
           src="/dice-roller-bridge.html"
           title="3D Dice Roller"
           className="w-full h-full border-4 border-red-500"
-          style={{ zIndex: 9999, pointerEvents: 'auto !important' }}
+          style={{ zIndex: 9999, pointerEvents: 'auto' }}
         />
       </div>
     </div>

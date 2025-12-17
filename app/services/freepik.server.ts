@@ -82,35 +82,45 @@ export async function pollTaskStatus(
   intervalMs: number = 3000
 ) {
   logger.log(logger.LogLevel.DEBUG,`Polling task status for task_id: ${taskId}`);
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = await callFreepikApi(
-      `/v1/ai/text-to-image/flux-dev/${taskId}`
-    );
-    logger.log(logger.LogLevel.DEBUG,
-      `Attempt ${attempt} for task ${taskId}: status = ${response.data.status}`
-    );
+  
+  // Use Promise.race to implement timeout
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Image generation task ${taskId} timed out after ${maxAttempts * intervalMs}ms`)), maxAttempts * intervalMs);
+  });
+  
+  const pollPromise = (async () => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const response = await callFreepikApi(
+        `/v1/ai/text-to-image/flux-dev/${taskId}`
+      );
+      logger.log(logger.LogLevel.DEBUG,
+        `Attempt ${attempt} for task ${taskId}: status = ${response.data.status}`
+      );
 
-    if (response.data.status === "COMPLETED") {
-      if (response.data.generated && response.data.generated.length > 0) {
-        const imageUrl = response.data.generated[0];
-        logger.log(logger.LogLevel.DEBUG,`Task ${taskId} completed. Image URL: ${imageUrl}`);
-        return imageUrl;
-      } else {
-        throw new Error(
-          `Task ${taskId} completed, but no image URL found in generated data.`
-        );
+      if (response.data.status === "COMPLETED") {
+        if (response.data.generated && response.data.generated.length > 0) {
+          const imageUrl = response.data.generated[0];
+          logger.log(logger.LogLevel.DEBUG,`Task ${taskId} completed. Image URL: ${imageUrl}`);
+          return imageUrl;
+        } else {
+          throw new Error(
+            `Task ${taskId} completed, but no image URL found in generated data.`
+          );
+        }
+      } else if (response.data.status === "FAILED" || response.data.status === "CANCELED") {
+        const errorMessage =
+          response.error?.message || `Task ${taskId} failed with status ${response.data.status}`;
+        throw new Error(errorMessage);
       }
-    } else if (response.data.status === "FAILED" || response.data.status === "CANCELED") {
-      const errorMessage =
-        response.error?.message || `Task ${taskId} failed with status ${response.data.status}`;
-      throw new Error(errorMessage);
-    }
 
-    if (attempt < maxAttempts) {
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
     }
-  }
-  throw new Error(`Image generation task ${taskId} timed out after ${maxAttempts} attempts.`);
+    throw new Error(`Image generation task ${taskId} timed out after ${maxAttempts} attempts.`);
+  })();
+  
+  return Promise.race([pollPromise, timeoutPromise]);
 }
 
 export async function downloadImageAsBase64(imageUrl: string) {
@@ -133,13 +143,13 @@ export async function downloadImageAsBase64(imageUrl: string) {
   }
 }
 
-export async function generateImage(prompt: string, aspectRatio?: string): Promise<string> {
+export async function generateImage(prompt: string, aspectRatio?: string, maxAttempts?: number, intervalMs?: number): Promise<string> {
   logger.log(logger.LogLevel.DEBUG,
     `Orchestrating image generation for prompt: "${prompt}" (aspectRatio: ${aspectRatio})`
   );
   try {
     const taskId = await createImageGenerationTask(prompt, aspectRatio);
-    const imageUrl = await pollTaskStatus(taskId);
+    const imageUrl = await pollTaskStatus(taskId, maxAttempts, intervalMs);
     // Directly return the image URL instead of downloading and converting to base64
     return imageUrl;
   } catch (err: any) {

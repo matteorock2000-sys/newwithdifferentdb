@@ -19,7 +19,7 @@ export async function loader({ request }: { request: Request }) {
     // Calculate vote counts per scenario
     const voteCounts = {};
     votes.forEach(vote => {
-      voteCounts[vote.scenario_id] = (voteCounts[vote.scenario_id] || 0) + 1;
+      voteCounts[vote.scenarioId] = (voteCounts[vote.scenarioId] || 0) + 1;
     });
     
     console.log(`[API VOTES] Returning ${votes.length} votes for room: ${roomCode}`);

@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { generateCharacterFeatures, generateCharacterPersonality } from "~/services/gemini.server";
+import { logger } from "~/utils/logger";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
@@ -18,7 +19,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
     return json({ features, personality });
   } catch (error) {
-    console.error("Error generating character details via API:", error);
+    logger.error("Error generating character details via API", { error: error instanceof Error ? error.message : "Unknown error" });
     return json({ error: "Failed to generate character details." }, { status: 500 });
   }
 }

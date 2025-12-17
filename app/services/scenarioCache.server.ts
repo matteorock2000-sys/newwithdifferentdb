@@ -7,6 +7,8 @@ import type { AdventureScenario } from "~/types";
  */
 const scenarioCache = new Map<string, AdventureScenario[]>();
 
+import { logger } from "~/utils/logger";
+
 /**
  * Stores an array of scenarios in the cache and returns a unique ID.
  * @param scenarios The array of AdventureScenario objects to store.
@@ -17,11 +19,11 @@ export function storeScenarios(scenarios: AdventureScenario[]): string {
   // Set a timeout to clear the cache entry after 15 minutes to prevent memory leaks
   setTimeout(() => {
     scenarioCache.delete(id);
-    console.log(`[SCENARIO CACHE] Cleared expired scenarios for ID: ${id}`);
+    logger.debug('Cleared expired scenarios', { id });
   }, 15 * 60 * 1000); 
   
   scenarioCache.set(id, scenarios);
-  console.log(`[SCENARIO CACHE] Stored ${scenarios.length} scenarios with ID: ${id}`);
+  logger.info('Stored scenarios', { id, count: scenarios.length });
   return id;
 }
 
@@ -31,7 +33,7 @@ export function storeScenarios(scenarios: AdventureScenario[]): string {
  * @returns The array of AdventureScenario objects or undefined if not found.
  */
 export function getScenarios(id: string): AdventureScenario[] | undefined {
-  console.log(`[SCENARIO CACHE] Retrieving scenarios for ID: ${id}`);
+  logger.debug('Retrieving scenarios', { id });
   return scenarioCache.get(id);
 }
 
@@ -42,7 +44,7 @@ export function getScenarios(id: string): AdventureScenario[] | undefined {
 export function clearScenarios(id: string): void {
   const deleted = scenarioCache.delete(id);
   if (deleted) {
-    console.log(`[SCENARIO CACHE] Cleared scenarios for ID: ${id}`);
+    logger.info('Cleared scenarios', { id });
   }
 }
 
@@ -55,8 +57,8 @@ export function storeScenariosWithKey(key: string, scenarios: AdventureScenario[
   // Set a timeout to clear the cache entry after 30 minutes to prevent memory leaks
   setTimeout(() => {
     scenarioCache.delete(key);
-    console.log(`[SCENARIO CACHE] Cleared expired scenarios for room: ${key}`);
+    logger.debug('Cleared expired scenarios for room', { key });
   }, 30 * 60 * 1000); // 30 minutes for rooms
   scenarioCache.set(key, scenarios);
-  console.log(`[SCENARIO CACHE] Stored ${scenarios.length} scenarios for room: ${key}`);
+  logger.info('Stored scenarios for room', { key, count: scenarios.length });
 }

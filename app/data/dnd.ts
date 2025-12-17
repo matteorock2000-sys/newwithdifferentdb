@@ -318,6 +318,8 @@ export const RANGED_WEAPONS: Weapon[] = [
 export const DND_5E_CHARACTERS: Character[] = [
   {
     id: 'default-1',
+    userId: '',
+    slotIndex: 0,
     name: 'Elara Whisperwind',
     race: 'Elf',
     class: 'Ranger',
@@ -357,6 +359,8 @@ export const DND_5E_CHARACTERS: Character[] = [
   },
   {
     id: 'default-2',
+    userId: '',
+    slotIndex: 0,
     name: 'Grak Stonefist',
     race: 'Half-Orc',
     class: 'Barbarian',

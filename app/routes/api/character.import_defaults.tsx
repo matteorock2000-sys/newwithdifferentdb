@@ -2,6 +2,7 @@ import { ActionFunctionArgs, json } from "@remix-run/node";
 import { requireUserId } from "~/services/auth.server";
 import { getCharactersForUser, saveCharacter } from "~/services/db.server";
 import type { Character } from "~/types";
+import { logger } from "~/utils/logger";
 
 // Define default characters (replace with actual character data)
 const defaultCharacters: Omit<Character, 'id' | 'slotIndex' | 'userId'>[] = [
@@ -70,7 +71,7 @@ const defaultCharacters: Omit<Character, 'id' | 'slotIndex' | 'userId'>[] = [
 ];
 
 export async function action({ request }: ActionFunctionArgs) {
-  console.log("--- API character import defaults action hit ---");
+  logger.debug("--- API character import defaults action hit ---");
 
   // 1. Ensure user is authenticated
   const userId = await requireUserId(request);
@@ -90,7 +91,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     if (nextSlot > maxSlots) {
-      console.warn("No available character slots to import default characters.");
+      logger.warn("No available character slots to import default characters.");
       break; // No more slots available
     }
 
@@ -109,7 +110,7 @@ export async function action({ request }: ActionFunctionArgs) {
       occupiedSlots.add(nextSlot); // Mark the slot as occupied
       nextSlot++; // Increment for the next character
     } catch (error) {
-      console.error("Error saving default character:", error);
+      logger.error("Error saving default character", { error: error instanceof Error ? error.message : "Unknown error" });
       return json(
         {
           success: false,

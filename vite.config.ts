@@ -17,18 +17,25 @@ export default defineConfig({
     }),
     tsconfigPaths(),
   ],
+  server: {
+    headers: {
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Opener-Policy': 'same-origin'
+    }
+  },
+  define: { // ADDED THIS BLOCK
+    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV),
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom', '@supabase/supabase-js'],
+    exclude: ['libs/three.min.js', 'libs/cannon.min.js', 'libs/teal.js']
+  },
   build: {
     target: 'es2020',
     minify: 'terser',
     cssCodeSplit: true,
     rollupOptions: {
-      output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          supabase: ['@supabase/supabase-js'],
-          utils: ['ioredis', 'uuid', 'bcryptjs', 'isbot']
-        }
-      }
+      external: ['libs/three.min.js', 'libs/cannon.min.js', 'libs/teal.js']
     },
     terserOptions: {
       compress: {
@@ -36,8 +43,5 @@ export default defineConfig({
         drop_debugger: true
       }
     }
-  },
-  optimizeDeps: {
-    include: ['react', 'react-dom', '@supabase/supabase-js']
   }
 });

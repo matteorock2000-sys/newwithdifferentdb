@@ -1,12 +1,6 @@
 import { useMemo } from 'react';
 import type { PlayerSlot, Character } from '~/types';
-
-export interface OwnershipValidationResult {
-  isValid: boolean;
-  errorMessage?: string;
-  canTakeSlot: boolean;
-  isOwnSlot: boolean;
-}
+import { validateSlotOwnership, validateRoomCapacity, OwnershipValidationResult, RoomCapacityValidationResult } from '~/utils/slotValidation'; // Import from utils
 
 export interface RoomCapacityValidationResult {
   isRoomFull: boolean;
@@ -28,70 +22,7 @@ export interface SlotValidationResult {
   occupiedSlots: number;
 }
 
-function validateSlotOwnership(
-  slotIndex: number,
-  slot: PlayerSlot,
-  currentUserId: string,
-  character: Character | undefined,
-  isLobbyView: boolean
-): OwnershipValidationResult {
-  const hasOwnershipData = !!currentUserId && !!slot.userId;
-  const isOwnSlot = hasOwnershipData 
-    ? currentUserId === slot.userId 
-    : (isLobbyView ? !slot.userId : true);
-  
-  const canTakeSlot = !isLobbyView || isOwnSlot || !character || character.userId === currentUserId;
-  
-  if (character && character.userId !== currentUserId && !isOwnSlot) {
-    return {
-      isValid: false,
-      errorMessage: "Cannot assign a character that doesn't belong to you",
-      canTakeSlot: false,
-      isOwnSlot
-    };
-  }
-  
-  if (slot.userId && slot.userId !== currentUserId && !isOwnSlot) {
-    return {
-      isValid: false,
-      errorMessage: "This slot is occupied by another player",
-      canTakeSlot: false,
-      isOwnSlot
-    };
-  }
-  
-  return {
-    isValid: true,
-    canTakeSlot,
-    isOwnSlot
-  };
-}
 
-function validateRoomCapacity(
-  allSlots: PlayerSlot[],
-  currentUserId: string,
-  maxPlayers: number = 4
-): RoomCapacityValidationResult {
-  const uniquePlayers = new Set(
-    allSlots.filter(slot => slot.userId).map(slot => slot.userId)
-  ).size;
-  
-  const userSlotCount = allSlots.filter(
-    slot => slot.userId === currentUserId
-  ).length;
-  
-  const occupiedSlots = allSlots.filter(slot => slot.type !== 'None').length;
-  const isRoomFull = uniquePlayers >= maxPlayers || occupiedSlots >= 4;
-  const userHasMaxSlots = userSlotCount >= 2;
-  
-  return {
-    isRoomFull,
-    userSlotCount,
-    userHasMaxSlots,
-    uniquePlayers,
-    occupiedSlots
-  };
-}
 
 export function useSlotValidation(
   slotIndex: number,
@@ -106,7 +37,7 @@ export function useSlotValidation(
     validateSlotOwnership(
       slotIndex, 
       playerSlot, 
-      currentUserId || '', 
+      currentUserId, 
       selectedCharacter, 
       isLobbyView
     )
@@ -115,7 +46,7 @@ export function useSlotValidation(
   const capacityValidation = useMemo(() => 
     validateRoomCapacity(
       allSlots, 
-      currentUserId || '', 
+      currentUserId, 
       maxPlayers
     )
   , [allSlots, currentUserId, maxPlayers]);

@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puter.js + Droid Factory Integration Test</title>
+    <!-- Include Puter.js -->
+    <script src="https://js.puter.com/v2/"></script>
+    <!-- Include the bridge -->
+    <script src="droid-factory-puter-bridge.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .demo-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin-top: 15px;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        input[type="text"] {
+            width: 300px;
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 5px;
+        }
+        img {
+            max-width: 100%;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+    </style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .demo-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin-top: 15px;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        input[type="text"], input[type="file"] {
+            width: 300px;
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 5px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Puter.js + Droid Factory Integration Test</h1>
+        
+        <div id="status" class="status">Loading Puter.js bridge...</div>
+        
+        <div class="demo-section">
+            <h2>🤖 AI Chat (Droid Factory Tool)</h2>
+            <p>Test the AI chat functionality through the Droid Factory bridge:</p>
+            <button onclick="testAIChat()">Test AI Chat</button>
+            <div id="aiResult" class="result" style="display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>🎨 Image Generation (Droid Factory Tool)</h2>
+            <p>Test image generation through the Droid Factory bridge:</p>
+            <input type="text" id="imagePrompt" placeholder="Describe an image...">
+            <button onclick="testImageGeneration()">Generate Image</button>
+            <div id="imageResult" class="result" style="display:none;"></div>
+            <div id="imageContainer" style="margin-top: 15px; display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>☁️ Cloud Storage (Droid Factory Tool)</h2>
+            <p>Test cloud storage through the Droid Factory bridge:</p>
+            <button onclick="testStorage()">Test Storage</button>
+            <div id="storageResult" class="result" style="display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>🔍 Debug Puter.js</h2>
+            <p>Debug what's available in the puter object:</p>
+            <button onclick="debugPuter()">Debug Puter.js</button>
+            <div id="debugResult" class="result" style="display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>🔧 Direct Puter.js Test</h2>
+            <p>Test Puter.js directly to verify it's working:</p>
+            <button onclick="testDirectPuter()">Test Direct Puter.js</button>
+            <div id="directResult" class="result" style="display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>📊 Direct Puter.js vs Droid Factory Bridge</h2>
+            <p>Compare direct Puter.js calls with Droid Factory bridge calls:</p>
+            <button onclick="compareApproaches()">Compare Approaches</button>
+            <div id="comparisonResult" class="result" style="display:none;"></div>
+        </div>
+    </div>
+
+    <script>
+        // Wait for the bridge to be ready
+        let bridgeReady = false;
+        
+        function checkBridgeReady() {
+            // First, check if puter object exists
+            if (typeof puter === 'undefined') {
+                document.getElementById('status').innerHTML = '🔄 Loading Puter.js...';
+                document.getElementById('status').className = 'status';
+                setTimeout(checkBridgeReady, 500);
+                return;
+            }
+            
+            // Check if bridge is ready
+            if (window.puterBridge && window.puterBridge.puterReady) {
+                bridgeReady = true;
+                document.getElementById('status').innerHTML = '✅ Puter.js Bridge Ready! All features available.';
+                document.getElementById('status').className = 'status success';
+            } else {
+                document.getElementById('status').innerHTML = '🔄 Puter.js loaded, initializing bridge...';
+                document.getElementById('status').className = 'status';
+                setTimeout(checkBridgeReady, 500);
+            }
+        }
+        
+        // Initialize check
+        checkBridgeReady();
+
+        // Test AI Chat through Droid Factory bridge
+        async function testAIChat() {
+            const resultDiv = document.getElementById('aiResult');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '🤖 Testing AI chat through Droid Factory bridge...';
+            
+            try {
+                const request = {
+                    tool: 'ai.chat',
+                    parameters: {
+                        text: 'Explain AI like I\'m five!'
+                    }
+                };
+                
+                const result = await window.puterBridge.handleDroidFactoryRequest(request);
+                
+                if (result.success) {
+                    resultDiv.textContent = `✅ Success!\n\nTool: ${result.tool}\nResult: ${result.result}`;
+                } else {
+                    resultDiv.textContent = `❌ Error: ${result.error}`;
+                }
+            } catch (error) {
+                resultDiv.textContent = `❌ Exception: ${error.message}`;
+            }
+        }
+
+        // Test Image Generation through Droid Factory bridge
+        async function testImageGeneration() {
+            const prompt = document.getElementById('imagePrompt').value;
+            const resultDiv = document.getElementById('imageResult');
+            const imageContainer = document.getElementById('imageContainer');
+            
+            resultDiv.style.display = 'block';
+            imageContainer.style.display = 'none';
+            
+            if (!prompt) {
+                resultDiv.textContent = 'Please enter a prompt for image generation.';
+                return;
+            }
+            
+            try {
+                const request = {
+                    tool: 'image.generate',
+                    parameters: {
+                        prompt: prompt
+                    }
+                };
+                
+                resultDiv.textContent = '🎨 Generating image through Droid Factory bridge...';
+                
+                const result = await window.puterBridge.handleDroidFactoryRequest(request);
+                
+                if (result.success) {
+                    resultDiv.textContent = `✅ Success!\n\nTool: ${result.tool}\nPrompt: ${result.result.prompt}\nImage URL: ${result.result.url}`;
+                    
+                    imageContainer.style.display = 'block';
+                    imageContainer.innerHTML = `<img src="${result.result.url}" style="max-width: 100%; border-radius: 5px; border: 1px solid #ddd;">`;
+                } else {
+                    resultDiv.textContent = `❌ Error: ${result.error}`;
+                }
+            } catch (error) {
+                resultDiv.textContent = `❌ Exception: ${error.message}`;
+            }
+        }
+
+        // Test Cloud Storage through Droid Factory bridge
+        async function testStorage() {
+            const resultDiv = document.getElementById('storageResult');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '☁️ Testing cloud storage through Droid Factory bridge...';
+            
+            try {
+                // Test write
+                const writeRequest = {
+                    tool: 'storage.write',
+                    parameters: {
+                        path: '/droid-factory-test.txt',
+                        content: 'Hello from Droid Factory + Puter.js integration test!'
+                    }
+                };
+                
+                const writeResult = await window.puterBridge.handleDroidFactoryRequest(writeRequest);
+                
+                // Test read
+                const readRequest = {
+                    tool: 'storage.read',
+                    parameters: {
+                        path: '/droid-factory-test.txt'
+                    }
+                };
+                
+                const readResult = await window.puterBridge.handleDroidFactoryRequest(readRequest);
+                
+                let output = '✅ Storage Test Results:\n\n';
+                
+                if (writeResult.success) {
+                    output += `Write - Tool: ${writeResult.tool}\nFile ID: ${writeResult.result.fileId}\nMessage: ${writeResult.result.message}\n\n`;
+                } else {
+                    output += `Write - Error: ${writeResult.error}\n\n`;
+                }
+                
+                if (readResult.success) {
+                    output += `Read - Tool: ${readResult.tool}\nData: ${readResult.result.data}`;
+                } else {
+                    output += `Read - Error: ${readResult.error}`;
+                }
+                
+                resultDiv.textContent = output;
+            } catch (error) {
+                resultDiv.textContent = `❌ Exception: ${error.message}`;
+            }
+        }
+
+        // Debug Puter.js object
+        function debugPuter() {
+            const resultDiv = document.getElementById('debugResult');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '🔍 Debugging Puter.js object...';
+            
+            try {
+                // Check if puter object exists
+                if (typeof puter === 'undefined') {
+                    resultDiv.textContent = '❌ Puter.js is not loaded';
+                    return;
+                }
+                
+                resultDiv.textContent = '✅ Puter.js object found!\n\n';
+                resultDiv.textContent += 'Object type: ' + typeof puter + '\n';
+                resultDiv.textContent += 'Object keys: ' + Object.keys(puter).join(', ') + '\n\n';
+                
+                // Check for init method
+                resultDiv.textContent += 'puter.init type: ' + typeof puter.init + '\n';
+                
+                // Check for AI methods
+                if (puter.ai) {
+                    resultDiv.textContent += '\nAI methods: ' + Object.keys(puter.ai).join(', ') + '\n';
+                } else {
+                    resultDiv.textContent += '\n❌ puter.ai not found\n';
+                }
+                
+                // Check for FS methods
+                if (puter.fs) {
+                    resultDiv.textContent += '\nFS methods: ' + Object.keys(puter.fs).join(', ') + '\n';
+                } else {
+                    resultDiv.textContent += '\n❌ puter.fs not found\n';
+                }
+                
+                // Check for other properties
+                for (let key in puter) {
+                    if (typeof puter[key] === 'function') {
+                        resultDiv.textContent += '\n✅ ' + key + '(): function';
+                    } else if (typeof puter[key] === 'object') {
+                        resultDiv.textContent += '\n📁 ' + key + ': object';
+                    } else {
+                        resultDiv.textContent += '\n📄 ' + key + ': ' + typeof puter[key];
+                    }
+                }
+                
+            } catch (error) {
+                resultDiv.textContent = `❌ Debug failed: ${error.message}`;
+            }
+        }
+
+        // Test direct Puter.js
+        async function testDirectPuter() {
+            const resultDiv = document.getElementById('directResult');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '🔧 Testing direct Puter.js...';
+            
+            try {
+                // Check if puter object exists
+                if (typeof puter === 'undefined') {
+                    resultDiv.textContent = '❌ Puter.js is not loaded';
+                    return;
+                }
+                
+                // Check if puter.init exists
+                if (typeof puter.init !== 'function') {
+                    resultDiv.textContent = '❌ puter.init is not available';
+                    return;
+                }
+                
+                // Try to initialize if not already done
+                if (!window.puterInitialized) {
+                    await puter.init();
+                    window.puterInitialized = true;
+                    resultDiv.textContent += '\n✅ Puter.js initialized successfully!';
+                }
+                
+                // Test AI chat
+                const response = await puter.ai.chat('Hello from direct test!');
+                resultDiv.textContent += `\n\n🤖 AI Response: ${response}`;
+                
+            } catch (error) {
+                resultDiv.textContent = `❌ Direct Puter.js test failed: ${error.message}`;
+            }
+        }
+
+        // Compare direct Puter.js vs Droid Factory bridge
+        async function compareApproaches() {
+            const resultDiv = document.getElementById('comparisonResult');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '📊 Comparing direct Puter.js vs Droid Factory bridge...';
+            
+            try {
+                const testMessage = 'Compare approaches test';
+                
+                // Direct Puter.js approach
+                const directResult = await puter.ai.chat(testMessage);
+                
+                // Droid Factory bridge approach
+                const bridgeRequest = {
+                    tool: 'ai.chat',
+                    parameters: {
+                        text: testMessage
+                    }
+                };
+                const bridgeResult = await window.puterBridge.handleDroidFactoryRequest(bridgeRequest);
+                
+                let output = '📊 Comparison Results:\n\n';
+                output += 'Direct Puter.js:\n';
+                output += `Result: ${directResult}\n\n`;
+                output += 'Droid Factory Bridge:\n';
+                if (bridgeResult.success) {
+                    output += `Tool: ${bridgeResult.tool}\nResult: ${bridgeResult.result}`;
+                } else {
+                    output += `Error: ${bridgeResult.error}`;
+                }
+                
+                resultDiv.textContent = output;
+            } catch (error) {
+                resultDiv.textContent = `❌ Exception: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>

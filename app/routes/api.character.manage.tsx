@@ -3,6 +3,7 @@ import { getSession } from "~/sessions";
 import { saveCharacter, getAllCharacters } from "~/services/characterCache.server";
 import { getCharacterById } from "~/services/db.server";
 import type { Character } from "~/types";
+import { logger } from "~/utils/logger";
 
 export async function action({ request }: ActionFunctionArgs) {
   const session = await getSession(request.headers.get("cookie"));
@@ -27,7 +28,7 @@ export async function action({ request }: ActionFunctionArgs) {
       if (character.id) {
         const existingCharacter = await getCharacterById(userId, character.id);
         if (existingCharacter && existingCharacter.avatarUrl && !character.avatarUrl) {
-          console.log('[CHARACTER UPDATE] Preserving existing portrait');
+          logger.debug('Preserving existing portrait', { characterId: character.id });
           character.avatarUrl = existingCharacter.avatarUrl;
         }
       }
@@ -68,7 +69,7 @@ export async function action({ request }: ActionFunctionArgs) {
         return json({ type: 'success', character: updatedCharacter });
       }
     } catch (error) {
-      console.error("Failed to update character:", error);
+      logger.error("Failed to update character", { error: error instanceof Error ? error.message : "An unknown error occurred" });
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
       return json({ type: 'error', error: `Failed to update character: ${errorMessage}` }, { status: 500 });
     }
@@ -96,7 +97,7 @@ export async function action({ request }: ActionFunctionArgs) {
       await saveCharacter(userId, updatedCharacter);
       return json({ success: true, character: updatedCharacter });
     } catch (error) {
-      console.error("Failed to update portrait:", error);
+      logger.error("Failed to update portrait", { error: error instanceof Error ? error.message : "Unknown error" });
       return json({ error: "Failed to update portrait" }, { status: 500 });
     }
   }

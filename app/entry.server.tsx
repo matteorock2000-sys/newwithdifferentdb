@@ -11,6 +11,7 @@ import { createReadableStreamFromReadable } from "@remix-run/node";
 import { RemixServer } from "@remix-run/react";
 import { isbot } from "isbot";
 import { renderToPipeableStream } from "react-dom/server";
+import { logger } from "./utils/logger";
 
 const ABORT_DELAY = 5_000;
 
@@ -79,7 +80,7 @@ function handleBotRequest(
           // errors encountered during initial shell rendering since they'll
           // reject and get logged in handleDocumentRequest.
           if (shellRendered) {
-            console.error(error);
+            logger.error("Streaming rendering error", { error: error instanceof Error ? error.message : "Unknown error" });
           }
         },
       }
@@ -129,7 +130,7 @@ function handleBrowserRequest(
           // errors encountered during initial shell rendering since they'll
           // reject and get logged in handleDocumentRequest.
           if (shellRendered) {
-            console.error(error);
+            logger.error("Streaming rendering error", { error: error instanceof Error ? error.message : "Unknown error" });
           }
         },
       }

@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef } from 'react';
+import { logger } from './logger';
 
 interface Toast {
   id: string;
@@ -26,25 +27,62 @@ interface ToastProviderProps {
   children: ReactNode;
 }
 
+// Global toast state for non-React contexts
+let globalToasts: Toast[] = [];
+let globalSetToastsCallbacks: ((toasts: Toast[]) => void)[] = [];
+
+export const addGlobalSetToastsCallback = (callback: (toasts: Toast[]) => void) => {
+  globalSetToastsCallbacks.push(callback);
+  return () => {
+    globalSetToastsCallbacks = globalSetToastsCallbacks.filter(cb => cb !== callback);
+  };
+};
+
+export const showToast = (message: string, type: Toast['type'] = 'info') => {
+  const id = Math.random().toString(36).substr(2, 9);
+  globalToasts = [...globalToasts, { id, message, type }];
+  
+  // Notify all registered callbacks
+  globalSetToastsCallbacks.forEach(callback => callback(globalToasts));
+  
+  // Auto-hide after 3 seconds
+  setTimeout(() => {
+    globalToasts = globalToasts.filter(t => t.id !== id);
+    globalSetToastsCallbacks.forEach(callback => callback(globalToasts));
+  }, 3000);
+};
+
+export const hideToast = (id: string) => {
+  globalToasts = globalToasts.filter(t => t.id !== id);
+  globalSetToastsCallbacks.forEach(callback => callback(globalToasts));
+};
+
 export const ToastProvider = ({ children }: ToastProviderProps) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
-    const id = Math.random().toString(36).substr(2, 9);
-    setToasts(prev => [...prev, { id, message, type }]);
-    
-    // Auto-hide after 3 seconds
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 3000);
+  // Register this provider's callback
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+  
+  useEffect(() => {
+    unsubscribeRef.current = addGlobalSetToastsCallback(setToasts);
+    return () => {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+      }
+    };
   }, []);
 
-  const hideToast = useCallback((id: string) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
+  // Also expose the local showToast for React components
+  const localShowToast = useCallback((message: string, type: Toast['type'] = 'info') => {
+    showToast(message, type);
+  }, []);
+
+  const localHideToast = useCallback((id: string) => {
+    hideToast(id);
   }, []);
 
   return (
-    <ToastContext.Provider value={{ toasts, showToast, hideToast }}>
+    <ToastContext.Provider value={{ toasts, showToast: localShowToast, hideToast: localHideToast }}>
       {children}
       <div className="fixed top-4 right-4 z-50 space-y-2">
         {toasts.map(toast => (

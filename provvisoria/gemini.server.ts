@@ -20,6 +20,8 @@ function cleanText(text: string): string {
   return cleaned.trim();
 }
 
+import { logger } from "~/utils/logger";
+
 export async function generateScenariosForCharacter(character: Character, duration: string, regenerationPrompt?: string): Promise<AdventureScenario[]> {
 
   const regenerationContext = regenerationPrompt && regenerationPrompt.trim()
@@ -75,7 +77,12 @@ export async function generateScenariosForCharacter(character: Character, durati
   try {
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
-    console.log("Gemini Scenario Response:", responseText);
+    logger.info("Gemini Scenario Response", { 
+      characterName: character.name,
+      characterClass: character.class,
+      characterLevel: character.level,
+      duration 
+    });
 
     const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
     let jsonString = responseText;
@@ -85,7 +92,7 @@ export async function generateScenariosForCharacter(character: Character, durati
 
     const parsedResponse = JSON.parse(jsonString);
     if (!Array.isArray(parsedResponse) || parsedResponse.length !== 4) {
-      console.warn("AI did not return exactly 4 scenarios in the correct format. Attempting to use partial response.");
+      logger.warn("AI did not return exactly 4 scenarios in the correct format. Attempting to use partial response.");
     }
 
     // Ensure unique IDs for each scenario
@@ -94,7 +101,9 @@ export async function generateScenariosForCharacter(character: Character, durati
       id: scenario.id || crypto.randomUUID(), // Assign a UUID if missing
     }));
   } catch (error) {
-    console.error("Error calling Gemini API or parsing scenario response:", error);
+    logger.error("Error calling Gemini API or parsing scenario response", { 
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
     // Throw a specific error that can be caught by the action handler
     throw new Error('Failed to generate adventure scenarios.');
   }
@@ -135,7 +144,9 @@ export async function generateMapImage(scenario: AdventureScenario): Promise<str
 
   try {
     // 1. Submit the task and get the image URL directly
-    console.log("Submitting map generation task to Runware.ai...");
+    logger.info("Submitting map generation task to Runware.ai...", { 
+      scenarioTitle: scenario.title 
+    });
     const initialResponse = await fetch('https://api.runware.ai/v1', {
       method: 'POST',
       headers: {
@@ -147,7 +158,10 @@ export async function generateMapImage(scenario: AdventureScenario): Promise<str
 
     if (!initialResponse.ok) {
       const errorText = await initialResponse.text();
-      console.error("Runware.ai initial request failed:", errorText);
+      logger.error("Runware.ai initial request failed", { 
+        status: initialResponse.status,
+        errorText 
+      });
       throw new Error(`Runware.ai API error: ${initialResponse.status} ${errorText}`);
     }
 
@@ -155,10 +169,10 @@ export async function generateMapImage(scenario: AdventureScenario): Promise<str
     const imageUrl = initialData.data?.[0]?.imageURL;
 
     if (!imageUrl) {
-      console.error("Runware.ai response missing imageURL:", initialData);
+      logger.error("Runware.ai response missing imageURL", { initialData });
       throw new Error("Failed to get image URL from Runware.ai.");
     }
-    console.log("Image generated successfully. URL:", imageUrl);
+    logger.info("Image generated successfully", { imageUrl });
 
     // 2. Fetch the image and convert to base64
     const imageResponse = await fetch(imageUrl);
@@ -171,7 +185,9 @@ export async function generateMapImage(scenario: AdventureScenario): Promise<str
     return base64Image;
 
   } catch (error) {
-    console.error("Error calling Runware.ai API:", error);
+    logger.error("Error calling Runware.ai API", { 
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
     throw new Error('Failed to generate map image via Runware.ai.');
   }
 }
@@ -250,7 +266,9 @@ export async function parseCharacterDescription(text: string, context: any = {})
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
-    console.log("Gemini Raw Response:", responseText);
+    logger.info("Gemini Raw Response", { 
+      context: context.partialCharacter ? 'partial' : 'full'
+    });
 
     const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
     let jsonString = responseText;
@@ -261,7 +279,9 @@ export async function parseCharacterDescription(text: string, context: any = {})
     const parsedResponse = JSON.parse(jsonString);
     return parsedResponse;
   } catch (error) {
-    console.error("Error calling Gemini API or parsing response:", error);
+    logger.error("Error calling Gemini API or parsing response", { 
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
     throw new Error('Failed to process character description with AI.');
   }
 }

@@ -376,9 +376,28 @@ export async function saveTemporaryPartySetup(userId: string, partySlots: Player
 }
 
 /**
- * Retrieves the temporary party configuration and immediately deletes it.
+ * Clears (deletes) the temporary party configuration for a user.
  */
-export async function getAndClearTemporaryPartySetup(userId: string): Promise<PlayerSlot[] | null> {
+export async function clearTemporaryPartySetup(userId: string): Promise<void> {
+  const { error: deleteError } = await db
+    .from('temporary_party_setups')
+    .delete()
+    .eq('user_id', userId);
+
+  if (deleteError) {
+    logger.warn("[DB SERVICE] Warning: Failed to clear temporary party setup for user:", { userId, error: deleteError instanceof Error ? deleteError.message : "Unknown error" });
+    throw new Error("Failed to clear temporary party setup.");
+  } else {
+    logger.debug("[DB SERVICE] Temporary party setup cleared successfully.");
+  }
+}
+
+
+
+/**
+ * Retrieves the temporary party configuration.
+ */
+export async function getTemporaryPartySetup(userId: string): Promise<PlayerSlot[] | null> {
   // 1. Retrieve the data
   const { data, error: fetchError } = await db
     .from('temporary_party_setups')
@@ -397,23 +416,25 @@ export async function getAndClearTemporaryPartySetup(userId: string): Promise<Pl
     return null;
   }
   
-  logger.debug("[DB SERVICE] Successfully retrieved temporary party setup. Proceeding to clear.");
-
-  // 2. Delete the temporary entry
-  const { error: deleteError } = await db
-    .from('temporary_party_setups')
-    .delete()
-    // Query using user_id (snake_case)
-    .eq('user_id', userId);
-
-  if (deleteError) {
-    logger.warn("[DB SERVICE] Warning: Failed to clear temporary party setup for user:", { userId, error: deleteError instanceof Error ? deleteError.message : "Unknown error" });
-    // We proceed even if deletion fails, as retrieval succeeded.
-  } else {
-    logger.debug("[DB SERVICE] Temporary party setup cleared successfully.");
-  }
+  logger.debug("[DB SERVICE] Successfully retrieved temporary party setup.");
 
   // 3. Return the retrieved slots
   // Supabase returns JSONB columns as objects/arrays directly
   return data.party_slots as PlayerSlot[];
+}
+
+/**
+ * Retrieves the temporary party configuration for a user and then immediately clears it.
+ * This is useful for "consume once" temporary data patterns.
+ */
+export async function getAndClearTemporaryPartySetup(userId: string): Promise<PlayerSlot[] | null> {
+  logger.debug("[DB SERVICE] Attempting to get and clear temporary party setup for user:", { userId });
+  const partySlots = await getTemporaryPartySetup(userId);
+  if (partySlots) {
+    await clearTemporaryPartySetup(userId);
+    logger.debug("[DB SERVICE] Successfully got and cleared temporary party setup.");
+  } else {
+    logger.debug("[DB SERVICE] No temporary party setup found to get and clear.");
+  }
+  return partySlots;
 }

@@ -3,6 +3,7 @@ import { getSession } from "~/sessions";
 import { saveCharacter } from "~/services/characterCache.server"; // ASSUMED: This service handles saving the character object to DB
 import type { Character } from "~/types";
 import { generateCharacterFeatures, generateCharacterPersonality, parseCharacterText } from "~/services/gemini.server";
+import { logger } from "~/utils/logger";
 
 // NOTE: Since we cannot see the full implementation of gemini.server.ts, we must rely on existing exports 
 // and assume we can prompt Gemini to generate a complete character structure, similar to how parseCharacterText works.
@@ -85,7 +86,7 @@ export async function action({ request }: ActionFunctionArgs) {
     });
 
   } catch (error) {
-    console.error("AI Full Character Creation Failed:", error);
+    logger.error("AI Full Character Creation Failed", { error: error instanceof Error ? error.message : "Unknown error" });
     return json({ 
         type: 'error', 
         error: `Failed to generate character: ${error instanceof Error ? error.message : String(error)}` 

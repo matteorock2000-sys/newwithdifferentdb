@@ -1,5 +1,5 @@
 import { roll4d6DropLowest, rollHitDice, rollAllStats, calculateModifier } from "~/utils/dice";
-import type { Character, Stats, Modifiers, SavingThrows, Skills, Personality, SpellSlots } from "~/types";
+import type { Character, AbilityScores, CharacterPersonality, SpellSlots } from "~/types";
 
 // --- Static Data Lists ---
 
@@ -81,7 +81,7 @@ export function createRandomLevel3Character(): Omit<Character, 'userId' | 'slotI
   const ac = 10 + modifiers.dexterity;
   
   // Spellcasting Ability & DC (if applicable)
-  let spellcastingAbility: keyof Stats | undefined = undefined;
+  let spellcastingAbility: keyof AbilityScores | undefined = undefined;
   let spellSaveDC: number | undefined = undefined;
   let spellAttackBonus: string | undefined = undefined;
 

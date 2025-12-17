@@ -34,11 +34,16 @@ const extractValueWithKeyAndGroup = (text: string, keyRegex: RegExp, valueRegex:
   return valueMatch && valueMatch[groupIndex] ? valueMatch[groupIndex].trim() : undefined;
 };
 
+import { logger } from "~/utils/logger";
+
 // Utility function to extract a value based on a key and a regex
 const extractValueWithKeyAndGroupMultiple = (text: string, keyRegex: RegExp, valueRegex: RegExp, groupIndex: number = 1): string[] => {
   // Ensure the regex is global
   if (!valueRegex.global) {
-    console.warn("Regex is not global. Converting to global.");
+    logger.warn("Regex is not global. Converting to global.", { 
+      keyRegex: keyRegex.source,
+      valueRegex: valueRegex.source
+    });
     valueRegex = new RegExp(valueRegex.source, valueRegex.flags + 'g');
   }
 
@@ -203,7 +208,9 @@ export const parseCharacterSheet = (text: string, context?: { partialCharacter?:
       }
     }
   } catch (jsonError) {
-    console.warn("Error parsing description JSON:", jsonError);
+    logger.warn("Error parsing description JSON", { 
+      error: jsonError instanceof Error ? jsonError.message : 'Unknown error'
+    });
     // If JSON parsing fails, keep the existing values or leave them undefined.
   }
 
