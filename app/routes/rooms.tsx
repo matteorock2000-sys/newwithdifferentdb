@@ -1,4 +1,4 @@
-import { json, LoaderFunction, ActionFunction } from "@remix-run/node";
+import { json, redirect, LoaderFunction, ActionFunction } from "@remix-run/node";
 import { useLoaderData, useFetcher, Form, Link, useNavigate } from "@remix-run/react";
 import { useState, useEffect, useMemo } from "react";
 import { requireUser } from "~/services/auth.server";
@@ -52,89 +52,58 @@ export const loader: LoaderFunction = async ({ request }) => {
   );
   
   if (userInRoom) {
-    // User is already in a room, use only the user's own setup_slots, not all room slots
-    logger.debug('User is already in room, using room setup', { 
+    // User is already in a room - redirect them directly to the game
+    logger.debug('User is already in room, redirecting to game', { 
       userId: user.id,
       roomId: userInRoom.id,
-      roomSetup: userInRoom.setup_slots
+      roomCode: userInRoom.code
     });
-    
-    if (userInRoom.setup_slots && Array.isArray(userInRoom.setup_slots)) {
-      // Filter to only get slots belonging to the current user
-      const userSlots = userInRoom.setup_slots.filter(slot => slot.userId === user.id);
-      
-      // Pad with empty slots if needed to maintain 4 slots display
-      const paddedSlots = [...userSlots];
-      while (paddedSlots.length < 4) {
-        paddedSlots.push({ type: 'None', characterId: null, isReady: false });
-      }
-      
-      initialPartySlots = paddedSlots.map(slot => {
-        if (slot.characterId && slot.type !== 'None') {
-          return {
-            ...slot,
-            characterName: characterMap[slot.characterId] || slot.characterName,
-          };
-        }
-        return slot;
-      });
-      
-      // Log characters in the room
-      const characterNames = initialPartySlots
-        .filter(slot => slot.type !== 'None' && slot.characterName)
-        .map(slot => slot.characterName);
+    return redirect(`/game?roomCode=${userInRoom.code}`);
+  }
+  
+  // User is not in any room, check for temporary party setup
+  const temporaryParty = await getAndClearTemporaryPartySetup(user.id);
+  const userPartyData = temporaryParty || [];
+  
+  if (temporaryParty && Array.isArray(temporaryParty) && temporaryParty.length === 4) {
+    // Basic structural check
+    const isValidParty = temporaryParty.every(slot => 
+        typeof slot === 'object' && slot !== null && 
+        ('type' in slot) && ('characterId' in slot) && ('isReady' in slot)
+    );
+
+    if (isValidParty) {
+        // Populate characterName for display/logging if missing
+        initialPartySlots = (temporaryParty as PlayerSlot[]).map(slot => {
+            if (slot.characterId && slot.type !== 'None') {
+                return {
+                    ...slot,
+                    characterName: characterMap[slot.characterId] || slot.characterName,
+                };
+            }
+            return slot;
+        });
         
-      if (characterNames.length > 0) {
-        logger.debug('Characters in room', { characterNames });
-      }
-    }
-  } else {
-    // User is not in any room, check for temporary party setup
-    // Attempt to retrieve temporary party setup from the database
-    const temporaryParty = await getAndClearTemporaryPartySetup(user.id);
-    const userPartyData = temporaryParty || [];
-    
-    if (temporaryParty && Array.isArray(temporaryParty) && temporaryParty.length === 4) {
-      // Basic structural check
-      const isValidParty = temporaryParty.every(slot => 
-          typeof slot === 'object' && slot !== null && 
-          ('type' in slot) && ('characterId' in slot) && ('isReady' in slot)
-      );
+        // Only log when party setup is actually found and used
+        if (userPartyData.length > 0) {
+            logger.debug('Found valid party setup in DB. Using it as initial slots', { 
+              partyData: userPartyData
+            });
+            
+            // NEW LOGGING: List character names
+            const characterNames = initialPartySlots
+                .filter(slot => slot.type !== 'None' && slot.characterName)
+                .map(slot => slot.characterName);
+                
+            if (characterNames.length > 0) {
+                logger.debug('Characters in party', { characterNames });
+            }
+        }
 
-      if (isValidParty) {
-          // Populate characterName for display/logging if missing
-          initialPartySlots = (temporaryParty as PlayerSlot[]).map(slot => {
-              if (slot.characterId && slot.type !== 'None') {
-                  return {
-                      ...slot,
-                      characterName: characterMap[slot.characterId] || slot.characterName,
-                  };
-              }
-              return slot;
-          });
-          
-          // Only log when party setup is actually found and used
-          if (userPartyData.length > 0) {
-              logger.debug('Found valid party setup in DB. Using it as initial slots', { 
-                partyData: userPartyData
-              });
-              
-              // NEW LOGGING: List character names
-              const characterNames = initialPartySlots
-                  .filter(slot => slot.type !== 'None' && slot.characterName)
-                  .map(slot => slot.characterName);
-                  
-              if (characterNames.length > 0) {
-                  logger.debug('Characters in party', { characterNames });
-              }
-          }
-          // END NEW LOGGING
-
-      } else {
-          logger.debug('Found party data in DB but format is invalid. Using default slots', { 
-            partyData: userPartyData
-          });
-      }
+    } else {
+        logger.debug('Found party data in DB but format is invalid. Using default slots', { 
+          partyData: userPartyData
+        });
     }
   }
 
@@ -556,15 +525,15 @@ const { user, characters, initialPartySlots }  = loaderData;
               <div className="bg-gray-800/80 backdrop-blur-sm p-4 rounded-2xl shadow-2xl border border-green-700/50">
                 <h2 className="text-xl font-medieval text-green-400 mb-3">Create New Room</h2>
                 
-                <Form method="post" onSubmit={(e) => {
+                <form onSubmit={(e) => {
+                    e.preventDefault();
                     if (!canCreateRoom) {
-                        e.preventDefault();
                         showToast("Please ensure at least one Human character is selected and ready, and all active slots (Human/AI) are marked as Ready.", "error");
                         return;
                     }
                     showToast("Creating room...", "info");
-                    // Use fetcher to submit the form
-                    fetcher.submit(e.currentTarget);
+                    // Use fetcher to submit the form with explicit POST method
+                    fetcher.submit(e.currentTarget, { method: "post" });
                   }} className="space-y-4">
                   <input type="hidden" name="intent" value="createRoom" />
                   <input type="hidden" name="roomSlots" value={JSON.stringify(partySlots)} />
@@ -605,7 +574,7 @@ const { user, characters, initialPartySlots }  = loaderData;
                       )}
                     </button>
                   </div>
-                </Form>
+                </form>
               </div>
 
               {/* Join Room */}
@@ -613,15 +582,15 @@ const { user, characters, initialPartySlots }  = loaderData;
                 <h2 className="text-xl font-medieval text-blue-400 mb-3">Join Existing Room</h2>
                 <p className="text-gray-400 text-sm mb-3">Enter a room code to join an existing adventure</p>
 
-                <Form method="post" onSubmit={(e) => {
+                <form onSubmit={(e) => {
+                    e.preventDefault();
                     if (!canCreateRoom) {
-                        e.preventDefault();
                         showToast("Please ensure at least one Human character is selected and ready, and all active slots (Human/AI) are marked as Ready.", "error");
                         return;
                     }
                     showToast("Joining room...", "info");
-                    // Use fetcher to submit the form
-                    fetcher.submit(e.currentTarget);
+                    // Use fetcher to submit the form with explicit POST method
+                    fetcher.submit(e.currentTarget, { method: "post" });
                   }} className="space-y-4">
                   <input type="hidden" name="intent" value="joinRoom" />
                   <input type="hidden" name="roomSlots" value={JSON.stringify(partySlots)} />
@@ -648,7 +617,7 @@ const { user, characters, initialPartySlots }  = loaderData;
                   >
                     🔓 Join Room
                   </button>
-                </Form>
+                </form>
               </div>
             </div>
           </div>
