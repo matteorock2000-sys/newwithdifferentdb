@@ -162,45 +162,72 @@ export async function createUser(email: string, hashedPassword: string, username
 }
 
 export async function getUserByEmail(email: string): Promise<User | null> {
-  const { data, error } = await db
-    .from('users')
-    .select('*')
-    .eq('email', email)
-    .single();
+  try {
+    const { data, error, status } = await db
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
 
-  if (error && error.code !== 'PGRST116') {
-    logger.error("Error fetching user by email", { error: error instanceof Error ? error.message : "Unknown error" });
-    throw new Error("Failed to fetch user.");
+    if (error) {
+      logger.error("Error fetching user by email", { email, status, error });
+      if (error.code === 'PGRST116' || status === 406) return null;
+      throw new Error(`Failed to fetch user by email ${email}: ${error.message || JSON.stringify(error)}`);
+    }
+
+    return mapDbUserToUser(data);
+  } catch (err) {
+    logger.error("Exception while fetching user by email", { email, err });
+    throw err instanceof Error ? err : new Error("Unknown error fetching user by email");
   }
-  return mapDbUserToUser(data);
 }
 
 export async function getUserByUsername(username: string): Promise<User | null> {
-  const { data, error } = await db
-    .from('users')
-    .select('*')
-    .eq('username', username)
-    .single();
+  try {
+    const { data, error, status } = await db
+      .from('users')
+      .select('*')
+      .eq('username', username)
+      .single();
 
-  if (error && error.code !== 'PGRST116') {
-    logger.error("Error fetching user by username", { error: error instanceof Error ? error.message : "Unknown error" });
-    throw new Error("Failed to fetch user.");
+    if (error) {
+      logger.error("Error fetching user by username", { username, status, error });
+      if (error.code === 'PGRST116' || status === 406) return null;
+      throw new Error(`Failed to fetch user by username ${username}: ${error.message || JSON.stringify(error)}`);
+    }
+
+    return mapDbUserToUser(data);
+  } catch (err) {
+    logger.error("Exception while fetching user by username", { username, err });
+    throw err instanceof Error ? err : new Error("Unknown error fetching user by username");
   }
-  return mapDbUserToUser(data);
 }
 
 export async function getUserById(id: string): Promise<User | null> {
-  const { data, error } = await db
-    .from('users')
-    .select('*')
-    .eq('id', id)
-    .single();
+  try {
+    const { data, error, status } = await db
+      .from('users')
+      .select('*')
+      .eq('id', id)
+      .single();
 
-  if (error && error.code !== 'PGRST116') {
-    logger.error("Error fetching user by ID", { error: error instanceof Error ? error.message : "Unknown error" });
-    throw new Error("Failed to fetch user.");
+    if (error) {
+      // Log full error object and response status to help debugging (not just the message)
+      logger.error("Error fetching user by ID", { id, status, error });
+
+      // If PostgREST indicates "no rows" return null so callers can handle missing users
+      if (error.code === 'PGRST116' || status === 406) return null;
+
+      // For other errors, throw a descriptive error so upstream callers see details in logs
+      throw new Error(`Failed to fetch user by id ${id}: ${error.message || JSON.stringify(error)}`);
+    }
+
+    return mapDbUserToUser(data);
+  } catch (err) {
+    // Catch any unexpected exceptions (network, client misconfig) and log details
+    logger.error("Exception while fetching user by ID", { id, err });
+    throw err instanceof Error ? err : new Error("Unknown error fetching user by ID");
   }
-  return mapDbUserToUser(data);
 }
 
 // --- Character Management Functions ---

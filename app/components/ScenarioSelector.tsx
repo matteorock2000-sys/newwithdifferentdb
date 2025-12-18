@@ -2137,21 +2137,23 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                   </div>
                 )}
                 
-                {diceState && (
-                  <DiceBoxDirect
-                    players={diceState.players.map(player => ({
-                      slotIndex: player.slotIndex,
-                      characterName: player.characterName,
-                      userId: player.userId,
-                      hasRolled: diceState.rolls[player.slotIndex] !== undefined,
-                      result: diceState.rolls[player.slotIndex]
-                    }))}
-                    currentUserId={currentUserId}
-                    diceState={diceState}
-                    onPlayerRollComplete={onPlayerRollComplete}
-                    demoRolls={demoRolls}
-                  />
-                )}
+                                  {diceState && (
+                                    <>
+                                    {console.log('[SCENARIO SELECTOR] Rendering DiceBoxDirect - conditions', { needsTiebreaker, showDiceRoll, isInitializingDice, diceStatePresent: !!diceState })}
+                                    <DiceBoxDirect
+                                      players={diceState.players.map(player => ({
+                                        slotIndex: player.slotIndex,
+                                        characterName: player.characterName,
+                                        userId: player.userId,
+                                        hasRolled: diceState.rolls[player.slotIndex] !== undefined,
+                                        result: diceState.rolls[player.slotIndex]
+                                      }))}
+                                      currentUserId={currentUserId}
+                                      diceState={diceState}
+                                      onPlayerRollComplete={onPlayerRollComplete}
+                                      demoRolls={demoRolls}
+                                    />
+                                    </>                )}
                 
                 {!diceState && !isInitializingDice && (
                   <div className="text-center text-gray-400">

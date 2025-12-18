@@ -11,6 +11,7 @@ import { useGlobalToast } from "~/utils/toast";
 import { showToast } from "~/utils/toast";
 import { logger } from "~/utils/logger";
 import { debounce } from "~/utils/debounce";
+import { subscribeToRoomChanges } from "~/services/realtime.client";
 
 interface LoaderData {
   user: User;
@@ -32,7 +33,9 @@ export const loader: LoaderFunction = async ({ request }) => {
   const user = await requireUser(request);
   const session = await getSession(request.headers.get("Cookie"));
   const characters = await getCharactersForUser(user.id);
-  const activeRooms = await getAllActiveRooms();
+  const allRooms = await getAllActiveRooms();
+  // Only show rooms that are in the lobby state for room selection
+  const activeRooms = allRooms.filter(r => r.status === 'lobby');
   
   // Create a map for quick character name lookup
   const characterMap = characters.reduce((acc, char) => {
@@ -49,7 +52,7 @@ export const loader: LoaderFunction = async ({ request }) => {
   );
   
   if (userInRoom) {
-    // User is already in a room, use the room's setup_slots
+    // User is already in a room, use only the user's own setup_slots, not all room slots
     logger.debug('User is already in room, using room setup', { 
       userId: user.id,
       roomId: userInRoom.id,
@@ -57,7 +60,16 @@ export const loader: LoaderFunction = async ({ request }) => {
     });
     
     if (userInRoom.setup_slots && Array.isArray(userInRoom.setup_slots)) {
-      initialPartySlots = userInRoom.setup_slots.map(slot => {
+      // Filter to only get slots belonging to the current user
+      const userSlots = userInRoom.setup_slots.filter(slot => slot.userId === user.id);
+      
+      // Pad with empty slots if needed to maintain 4 slots display
+      const paddedSlots = [...userSlots];
+      while (paddedSlots.length < 4) {
+        paddedSlots.push({ type: 'None', characterId: null, isReady: false });
+      }
+      
+      initialPartySlots = paddedSlots.map(slot => {
         if (slot.characterId && slot.type !== 'None') {
           return {
             ...slot,
@@ -167,11 +179,17 @@ export const loader: LoaderFunction = async ({ request }) => {
 export const action: ActionFunction = async ({ request }) => {
     const user = await requireUser(request);
     try {
+        const formData = await request.formData();
+        const intent = formData.get('intent')?.toString();
+        
         logger.debug('User attempting room action', { 
-          userId: user.id.substring(0, 8)
+          userId: user.id.substring(0, 8),
+          intent,
+          formDataKeys: Array.from(formData.keys())
         });
+        
         // Delegate room creation/joining logic to room.server.ts
-        const result = await handleRoomAction(request, { userId: user.id });
+        const result = await handleRoomAction(formData, { userId: user.id });
         logger.debug('Room action completed', { 
           userId: user.id.substring(0, 8),
           resultStatus: result.status,
@@ -192,7 +210,7 @@ export const action: ActionFunction = async ({ request }) => {
             // Ensure the redirect is properly handled
             throw error;
         }
-        logger.error('Room action failed', { error });
+        logger.error('Room action failed', { error: error instanceof Error ? error.message : JSON.stringify(error), stack: error instanceof Error ? error.stack : undefined });
         const errorMessage = error instanceof Error ? error.message : 'Failed to process room action';
         // Return error message in JSON response for fetcher to catch
         return json({ error: errorMessage }, { status: 400 });
@@ -250,7 +268,7 @@ const { user, characters, initialPartySlots }  = loaderData;
   const [joinCode, setJoinCode] = useState('');
   const navigate = useNavigate();
 
-  // Polling effect: Refetch loader data every 5 seconds
+  // Polling effect: Refetch loader data every 10 seconds
   useEffect(() => {
     const interval = setInterval(() => {
         // Only load if the fetcher is idle and not currently submitting a form
@@ -261,6 +279,40 @@ const { user, characters, initialPartySlots }  = loaderData;
 
     return () => clearInterval(interval);
   }, [fetcher]);
+
+  // Realtime subscription to room changes for live participant count updates
+  useEffect(() => {
+    if (!activeRooms || activeRooms.length === 0) return;
+
+    const unsubscribers: Array<() => void> = [];
+
+    activeRooms.forEach(room => {
+      const unsubscribe = subscribeToRoomChanges(room.code, (payload) => {
+        logger.debug('[rooms.tsx] Room change detected:', { roomCode: room.code, payload });
+
+        // Update room data from realtime payload
+        setActiveRooms(prevRooms =>
+          prevRooms.map(r =>
+            r.code === room.code
+              ? {
+                  ...r,
+                  participants: payload.new?.participants || r.participants,
+                  setup_slots: payload.new?.setup_slots || r.setup_slots,
+                  status: payload.new?.status || r.status,
+                  updatedAt: payload.new?.updated_at || r.updatedAt,
+                }
+              : r
+          )
+        );
+      });
+
+      unsubscribers.push(unsubscribe);
+    });
+
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+    };
+  }, [activeRooms.map(r => r.code).join(',')]);
 
   // Update state when fetcher data arrives
   useEffect(() => {
@@ -423,42 +475,17 @@ const { user, characters, initialPartySlots }  = loaderData;
                         <div className="flex-1">
                           <div className="flex items-center space-x-3 mb-2">
                             <h3 className="font-bold text-xl text-white">{room.name}</h3>
-                            <span className="px-2 py-1 bg-gray-600 text-gray-200 text-xs rounded-full">Room Code: {room.code}</span>
+                            <span className="px-2 py-1 bg-gray-600 text-gray-200 text-xs rounded-full">Code: {room.code}</span>
                           </div>
                           <div className="flex items-center space-x-4 text-sm text-gray-400">
                             <span>Host: {hostUsernames?.[room.host_id] || room.host_id}</span>
                             <span>•</span>
                             <span>Players: {room.participants.length}/{room.maxPlayers}</span>
                             <span>•</span>
-                            <span>Status: {room.status}</span>
+                            <span className={`font-semibold ${room.status === 'lobby' ? 'text-green-400' : 'text-yellow-400'}`}>
+                              {room.status.charAt(0).toUpperCase() + room.status.slice(1)}
+                            </span>
                           </div>
-                        </div>
-                        <div className="flex items-center space-x-3">
-                          <div className="text-right text-sm text-gray-400">
-                            <div>Available Slots</div>
-                            <div className="font-bold text-white">{room.maxPlayers - room.participants.length}</div>
-                          </div>
-                          <Form method="post" onSubmit={(e) => {
-                              if (!canCreateRoom) {
-                                  e.preventDefault();
-                                  showToast("Please ensure at least one Human character is selected and ready, and all active slots (Human/AI) are marked as Ready.", "error");
-                                  return;
-                              }
-                              showToast("Joining room...", "info");
-                              // Use fetcher to submit the form
-                              fetcher.submit(e.currentTarget);
-                            }} className="ml-2">
-                            <input type="hidden" name="intent" value="joinRoom" />
-                            <input type="hidden" name="roomCode" value={room.code} />
-                            <input type="hidden" name="roomSlots" value={JSON.stringify(partySlots)} />
-                            <input type="hidden" name="username" value={user.username} />
-                            <button
-                              type="submit"
-                              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition duration-200"
-                            >
-                              Join
-                            </button>
-                          </Form>
                         </div>
                       </div>
                     </div>

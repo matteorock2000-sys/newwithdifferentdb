@@ -28,6 +28,7 @@ export default function DiceBoxDirect({
 
   // Handle messages from the iframe
   useEffect(() => {
+    console.log('[DiceBoxDirect] mounting - iframeRef.current (initial):', iframeRef.current);
     function handleIframeMessage(event: MessageEvent) {
       console.log('[DiceBoxDirect] Received iframe message:', event.data, 'event.source:', event.source, 'currentWindow:', iframeRef.current?.contentWindow);
       
@@ -97,6 +98,20 @@ export default function DiceBoxDirect({
     window.addEventListener('message', handleIframeMessage);
     return () => window.removeEventListener('message', handleIframeMessage);
   }, [diceState, onPlayerRollComplete, showToast]);
+
+  // Dev fallback: if iframe loads but doesn't post ready message, allow quick inspection in dev mode
+  const handleIframeLoad = () => {
+    console.log('[DiceBoxDirect] iframe onLoad fired', { iframe: iframeRef.current });
+    if (process.env.NODE_ENV === 'development') {
+      // Small delay to allow iframe scripts to initialize
+      setTimeout(() => {
+        if (!isReady) {
+          console.log('[DiceBoxDirect] Dev fallback: setting isReady = true');
+          setIsReady(true);
+        }
+      }, 600);
+    }
+  };
 
   // Handle dice state changes
   useEffect(() => {
@@ -256,6 +271,7 @@ export default function DiceBoxDirect({
           ref={iframeRef}
           src="/dice-roller-bridge.html"
           title="3D Dice Roller"
+          onLoad={handleIframeLoad}
           className="w-full h-full border-none"
           sandbox="allow-scripts allow-same-origin"
         ></iframe>

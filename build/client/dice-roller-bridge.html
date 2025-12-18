@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Dice Roller Bridge</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+            background: transparent;
+        }
+        #diceRoller {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+        /* Hide the original UI elements from public/index.html */
+        header, #diceRollerUI, #numPad, #instructions {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="diceRoller">
+        <!-- The dice box will be created here by dice.js -->
+    </div>
+
+    <!-- Include the same scripts as in public/index.html -->
+    <script src="libs/three.min.js"></script>
+    <script src="libs/cannon.min.js"></script>
+    <script src="libs/teal.js"></script>
+    <script src="dice.js"></script>
+    
+    <script>
+        // Bridge to communicate with parent window
+        let diceBox = null;
+        let isRolling = false;
+
+        // Wait for all scripts to load and DICE to be available
+        function initDiceBox() {
+            console.log('[BRIDGE] Checking DICE availability...');
+            
+            if (typeof window.DICE === 'undefined') {
+                console.log('[BRIDGE] DICE object not found, waiting...');
+                setTimeout(initDiceBox, 100);
+                return;
+            }
+            
+            if (typeof window.DICE.dice_box === 'undefined') {
+                console.log('[BRIDGE] DICE.dice_box not found, waiting...');
+                setTimeout(initDiceBox, 100);
+                return;
+            }
+
+            console.log('[BRIDGE] DICE object found, initializing dice box...');
+            
+            const container = document.getElementById('diceRoller');
+            if (!container) {
+                console.error('[BRIDGE] diceRoller container not found');
+                return;
+            }
+            
+            try {
+                diceBox = new window.DICE.dice_box(container);
+                console.log('[BRIDGE] Dice box created successfully');
+                
+                diceBox.setDice('1d20');
+
+                // Setup communication with parent
+                window.addEventListener('message', function(event) {
+                    console.log('[BRIDGE] Received message:', event.data);
+                    
+                    if (event.data && event.data.type === 'ROLL') {
+                        console.log('[BRIDGE] Roll command received, dice notation:', event.data.diceNotation);
+                        
+                        if (!isRolling && diceBox && diceBox.start_throw) {
+                            isRolling = true;
+                            console.log('[BRIDGE] Starting dice roll...');
+                            
+                            diceBox.start_throw(function(notation) {
+                                // Before roll
+                                console.log('[BRIDGE] Roll started');
+                                window.parent.postMessage({ 
+                                    type: 'ROLL_STARTED',
+                                    source: 'dice-roller-bridge'
+                                }, '*');
+                            }, function(notation) {
+                                // After roll
+                                console.log('[BRIDGE] Roll completed, result:', notation.resultTotal);
+                                const result = notation.resultTotal;
+                                
+                                // Debug the full notation object
+                                console.log('[BRIDGE] Full notation object:', {
+                                    resultTotal: notation.resultTotal,
+                                    result: notation.result,
+                                    constant: notation.constant,
+                                    set: notation.set
+                                });
+                                
+                                // Check for off-table dice condition or invalid results
+                                const firstResult = Array.isArray(notation.result) && notation.result.length > 0 ? notation.result[0] : null;
+                                if (firstResult !== null && (firstResult < 0 || firstResult === undefined || isNaN(firstResult))) {
+                                    console.log('[BRIDGE] Dice off table or invalid result detected:', firstResult);
+                                    window.parent.postMessage({
+                                        type: 'DICE_OFF_TABLE',
+                                        source: 'dice-roller-bridge'
+                                    }, '*');
+                                    isRolling = false;
+                                    return;
+                                }
+
+                                // Ensure we have a valid result
+                                if (result === undefined || isNaN(result) || result < 1) {
+                                    console.warn('[BRIDGE] Invalid roll result, using fallback:', result);
+                                    console.warn('[BRIDGE] Notation details:', notation);
+                                    notation.resultTotal = 1;
+                                    notation.result = [1];
+                                }
+
+                                window.parent.postMessage({
+                                    type: 'ROLL_RESULT',
+                                    notation: notation,
+                                    source: 'dice-roller-bridge'
+                                }, '*');
+                                isRolling = false;
+                                console.log('[BRIDGE] Roll result sent to parent:', notation.resultTotal);
+                            });
+                        } else {
+                            console.warn('[BRIDGE] Cannot start roll - already rolling or dice box not ready');
+                        }
+                    }
+                });
+
+                // Notify parent that dice box is ready
+                console.log('[BRIDGE] Notifying parent that dice box is ready');
+                window.parent.postMessage({
+                    type: 'DICE_BOX_READY',
+                    source: 'dice-roller-bridge'
+                }, '*');
+                
+            } catch (error) {
+                console.error('[BRIDGE] Error initializing dice box:', error);
+            }
+        }
+
+        // Initialize when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initDiceBox);
+        } else {
+            initDiceBox();
+        }
+    </script>
+</body>
+</html>

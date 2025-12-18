@@ -458,7 +458,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
             // If slot has a userId but no username, fetch the username
             if (newSlotData.userId && !newSlotData.username) {
-                const { getUserById } = await import("~/services/db.server");
                 const user = await getUserById(newSlotData.userId);
                 if (user) {
                     newSlotData = {

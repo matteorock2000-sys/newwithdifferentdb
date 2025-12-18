@@ -11,7 +11,21 @@ import { retryOperation } from "~/utils/retry";
  * Also triggers cleanup of inactive participants in the room.
  */
 export async function action({ request }: ActionFunctionArgs) {
-  const userId = (await requireUser(request)).id;
+  let userId: string;
+  try {
+    const user = await requireUser(request);
+    userId = user.id;
+  } catch (err: any) {
+    // If requireUser threw a redirect Response, re-throw it so Remix handles the redirect
+    if (typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number') {
+      throw err;
+    }
+
+    // Log error details to help diagnose getUser/getUserById issues
+    logger.error("Heartbeat auth failure", { error: err instanceof Error ? err.message : err, stack: err?.stack });
+
+    return createApiErrorResponse(err, "Authentication failed during heartbeat");
+  }
   const formData = await request.formData();
   const roomCode = formData.get("roomCode")?.toString();
 

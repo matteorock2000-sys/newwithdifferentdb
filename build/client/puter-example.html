@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puter.js Example - AI and Cloud</title>
+    <!-- Include Puter.js -->
+    <script src="https://js.puter.com/v2/"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .demo-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin-top: 15px;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        input[type="text"] {
+            width: 300px;
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 5px;
+        }
+        img {
+            max-width: 100%;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Puter.js Example - AI and Cloud!</h1>
+        
+        <div class="demo-section">
+            <h2>🤖 AI Chat Example</h2>
+            <p>Use Puter.js to chat with AI directly from your frontend:</p>
+            <button onclick="aiExample()">Ask AI: "Explain AI like I'm five!"</button>
+            <div id="aiResult" class="result" style="display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>💬 Chat with GPT-5 nano</h2>
+            <p>Example of chatting with GPT-5 nano model:</p>
+            <button onclick="chatGPT5Nano()">Chat with GPT-5 nano</button>
+            <div id="gpt5Result" class="result" style="display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>🖼️ Image Analysis</h2>
+            <p>Example of AI analyzing an image:</p>
+            <button onclick="analyzeImage()">Analyze Doge Image</button>
+            <div id="imageAnalysisResult" class="result" style="display:none;"></div>
+            <img id="dogeImage" src="https://assets.puter.site/doge.jpeg" style="display:none; max-width: 300px; margin-top: 10px;">
+        </div>
+
+        <div class="demo-section">
+            <h2>🎨 Generate Image with AI</h2>
+            <p>Example of generating an image using AI (test mode):</p>
+            <button onclick="generateAICat()">Generate Cat Image</button>
+            <div id="aiImageResult" class="result" style="display:none;"></div>
+            <div id="aiImageContainer" style="margin-top: 15px; display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>🌊 Stream AI Response</h2>
+            <p>Example of streaming AI response in real-time:</p>
+            <button onclick="streamAIResponse()">Stream Rick and Morty Explanation</button>
+            <div id="streamResult" class="result" style="display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>☁️ Cloud Storage Example</h2>
+            <p>Store and retrieve data from the cloud:</p>
+            <input type="text" id="cloudInput" placeholder="Enter some text to store">
+            <button onclick="storeCloudData()">Store in Cloud</button>
+            <button onclick="retrieveCloudData()">Retrieve from Cloud</button>
+            <div id="cloudResult" class="result" style="display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>🎨 AI Image Generation</h2>
+            <p>Generate images with AI:</p>
+            <input type="text" id="imagePrompt" placeholder="Describe an image...">
+            <button onclick="generateImage()">Generate Image</button>
+            <div id="imageResult" class="result" style="display:none;"></div>
+            <div id="imageContainer" style="margin-top: 15px; display:none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>📊 File Upload Example</h2>
+            <p>Upload files to the cloud:</p>
+            <input type="file" id="fileInput">
+            <button onclick="uploadFile()">Upload File</button>
+            <div id="fileResult" class="result" style="display:none;"></div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Puter.js
+        async function initPuter() {
+            try {
+                // Check if Puter.js is already initialized
+                if (typeof puter !== 'undefined' && puter && typeof puter.init === 'function') {
+                    await puter.init();
+                    console.log('✅ Puter.js initialized successfully!');
+                    document.getElementById('aiResult').textContent = 'Puter.js is ready! Click the AI button to start.';
+                    document.getElementById('aiResult').style.display = 'block';
+                } else {
+                    console.log('✅ Puter.js appears to be ready (auto-initialized?)');
+                    document.getElementById('aiResult').textContent = 'Puter.js is ready! Click the AI button to start.';
+                    document.getElementById('aiResult').style.display = 'block';
+                }
+            } catch (error) {
+                console.error('❌ Failed to initialize Puter.js:', error);
+                document.getElementById('aiResult').textContent = '❌ Failed to initialize Puter.js: ' + error.message;
+                document.getElementById('aiResult').style.display = 'block';
+            }
+        }
+
+        // AI Chat Example
+        async function aiExample() {
+            const resultDiv = document.getElementById('aiResult');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '🤖 Thinking...';
+            
+            try {
+                const response = await puter.ai.chat("Explain AI like I'm five!");
+                resultDiv.textContent = '🤖 AI Response:\n\n' + response;
+            } catch (error) {
+                resultDiv.textContent = '❌ Error: ' + error.message;
+            }
+        }
+
+        // Chat with GPT-5 nano
+        async function chatGPT5Nano() {
+            const resultDiv = document.getElementById('gpt5Result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '🤖 Chatting with GPT-5 nano...';
+            
+            try {
+                const response = await puter.ai.chat("What is life?", { model: "gpt-5-nano" });
+                resultDiv.textContent = '🤖 GPT-5 nano Response:\n\n' + response;
+            } catch (error) {
+                resultDiv.textContent = '❌ Error: ' + error.message;
+            }
+        }
+
+        // Image Analysis
+        async function analyzeImage() {
+            const resultDiv = document.getElementById('imageAnalysisResult');
+            const image = document.getElementById('dogeImage');
+            
+            resultDiv.style.display = 'block';
+            image.style.display = 'block';
+            resultDiv.textContent = '🖼️ Analyzing image...';
+            
+            try {
+                const response = await puter.ai.chat(
+                    "What do you see?", 
+                    "https://assets.puter.site/doge.jpeg", 
+                    { model: "gpt-5-nano" }
+                );
+                resultDiv.textContent = '🖼️ AI Analysis:\n\n' + response;
+            } catch (error) {
+                resultDiv.textContent = '❌ Error: ' + error.message;
+            }
+        }
+
+        // Generate Image with AI
+        async function generateAICat() {
+            const resultDiv = document.getElementById('aiImageResult');
+            const imageContainer = document.getElementById('aiImageContainer');
+            
+            resultDiv.style.display = 'block';
+            imageContainer.style.display = 'none';
+            resultDiv.textContent = '🎨 Generating cat image...';
+            
+            try {
+                const image = await puter.ai.txt2img('A picture of a cat.', true);
+                
+                resultDiv.textContent = '✅ Cat image generated successfully!';
+                
+                imageContainer.style.display = 'block';
+                imageContainer.appendChild(image);
+            } catch (error) {
+                resultDiv.textContent = '❌ Error generating image: ' + error.message;
+            }
+        }
+
+        // Stream AI Response
+        async function streamAIResponse() {
+            const resultDiv = document.getElementById('streamResult');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '🌊 Streaming response...';
+            
+            try {
+                const resp = await puter.ai.chat(
+                    'Tell me in detail what Rick and Morty is all about.', 
+                    { model: 'claude', stream: true }
+                );
+                
+                resultDiv.textContent = '🌊 Streaming Rick and Morty explanation:\n\n';
+                
+                for await (const part of resp) {
+                    if (part?.text) {
+                        resultDiv.textContent += part.text.replaceAll('\n', '\n');
+                    }
+                }
+            } catch (error) {
+                resultDiv.textContent = '❌ Error streaming response: ' + error.message;
+            }
+        }
+
+        // Cloud Storage Example
+        async function storeCloudData() {
+            const input = document.getElementById('cloudInput').value;
+            const resultDiv = document.getElementById('cloudResult');
+            resultDiv.style.display = 'block';
+            
+            if (!input) {
+                resultDiv.textContent = 'Please enter some text to store.';
+                return;
+            }
+            
+            try {
+                resultDiv.textContent = '☁️ Storing data in cloud...';
+                const file = await puter.fs.write('/my-data.txt', input);
+                resultDiv.textContent = '✅ Data stored successfully!\nFile ID: ' + file.id;
+            } catch (error) {
+                resultDiv.textContent = '❌ Error storing data: ' + error.message;
+            }
+        }
+
+        async function retrieveCloudData() {
+            const resultDiv = document.getElementById('cloudResult');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '☁️ Retrieving data from cloud...';
+            
+            try {
+                const data = await puter.fs.read('/my-data.txt');
+                resultDiv.textContent = '✅ Retrieved data:\n\n' + data;
+            } catch (error) {
+                resultDiv.textContent = '❌ Error retrieving data: ' + error.message;
+            }
+        }
+
+        // AI Image Generation Example
+        async function generateImage() {
+            const prompt = document.getElementById('imagePrompt').value;
+            const resultDiv = document.getElementById('imageResult');
+            const imageContainer = document.getElementById('imageContainer');
+            
+            resultDiv.style.display = 'block';
+            imageContainer.style.display = 'none';
+            
+            if (!prompt) {
+                resultDiv.textContent = 'Please enter a prompt for image generation.';
+                return;
+            }
+            
+            try {
+                resultDiv.textContent = '🎨 Generating image...';
+                const image = await puter.ai.generateImage(prompt);
+                
+                resultDiv.textContent = '✅ Image generated successfully!';
+                
+                imageContainer.style.display = 'block';
+                imageContainer.innerHTML = '<img src="' + image.url + '" style="max-width: 100%; border-radius: 5px; border: 1px solid #ddd;">';
+            } catch (error) {
+                resultDiv.textContent = '❌ Error generating image: ' + error.message;
+            }
+        }
+
+        // File Upload Example
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const resultDiv = document.getElementById('fileResult');
+            
+            if (!fileInput.files[0]) {
+                resultDiv.textContent = 'Please select a file to upload.';
+                resultDiv.style.display = 'block';
+                return;
+            }
+            
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '⬆️ Uploading file...';
+            
+            try {
+                const file = await puter.fs.upload(fileInput.files[0]);
+                resultDiv.textContent = '✅ File uploaded successfully!\nFile ID: ' + file.id + '\nName: ' + file.name;
+            } catch (error) {
+                resultDiv.textContent = '❌ Error uploading file: ' + error.message;
+            }
+        }
+
+        // Initialize Puter.js when page loads
+        window.addEventListener('load', initPuter);
+    </script>
+</body>
+</html>
