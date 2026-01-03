@@ -50,7 +50,22 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
     currentUserId,
     partySlots: partySlots.map(s => ({ type: s.type, characterId: s.characterId, userId: s.userId })),
     scenarios: scenarios?.length || 0,
-    activeCharacter: activeCharacter ? { id: activeCharacter.id, name: activeCharacter.name } : null
+    activeCharacter: activeCharacter ? { id: activeCharacter.id, name: activeCharacter.name } : null,
+    partyCharactersCount: partyCharacters.length,
+    partyCharacters: partyCharacters.map(c => ({ id: c.id, name: c.name, userId: c.userId }))
+  });
+  
+  // Additional debugging for character data
+  console.log(`[SCENARIO SELECTOR] Character data debug:`, {
+    partyCharactersLength: partyCharacters.length,
+    partyCharacters: partyCharacters.map(c => ({ id: c.id, name: c.name, userId: c.userId })),
+    partySlotsWithCharacters: partySlots.map((s, index) => ({ 
+      slotIndex: index, 
+      type: s.type, 
+      characterId: s.characterId, 
+      userId: s.userId,
+      characterName: s.characterName 
+    }))
   });
   
   // Check if activeCharacter is missing and show error
@@ -86,10 +101,119 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
     }
   }, [initialRoomCode]);
 
+  // Effect to handle scenario updates from props (real-time sync)
+  useEffect(() => {
+    if (scenarios && scenarios.length > 0) {
+      console.log(`[SCENARIO SELECTOR] Scenarios updated from props: ${scenarios.length} scenarios`);
+      // Update interface ready state when scenarios are available
+      setInterfaceReady(true);
+    }
+  }, [scenarios]);
+
+  // Effect to handle scenario updates from props (real-time sync)
+  useEffect(() => {
+    if (scenarios && scenarios.length > 0) {
+      console.log(`[SCENARIO SELECTOR] Scenarios updated from props: ${scenarios.length} scenarios`);
+      // Update interface ready state when scenarios are available
+      setInterfaceReady(true);
+    }
+  }, [scenarios]);
+
   // Mark interface as ready immediately to show UI without waiting for scenarios
   useEffect(() => {
     setInterfaceReady(true);
   }, []);
+  
+  // Suggestion polling effect - fetch suggestions and show toast notifications
+  useEffect(() => {
+    if (!initialRoomCode) return;
+    
+    console.log(`[SCENARIO SELECTOR] Starting suggestion polling for room ${initialRoomCode}`);
+    
+    const pollSuggestions = async () => {
+      try {
+        console.log(`[SCENARIO SELECTOR] Polling for suggestions in room ${initialRoomCode}`);
+        const response = await fetch(`/api/room/suggestions?roomCode=${encodeURIComponent(initialRoomCode)}`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          const newSuggestions = data.suggestions || [];
+          
+          console.log(`[SCENARIO SELECTOR] Current lastSeenSuggestionId: ${lastSeenSuggestionId}, New suggestions: ${newSuggestions.length}`);
+          
+          // Check if we have new suggestions and show toast for all users
+          if (newSuggestions.length > 0) {
+            // Only show toast if this is a truly new suggestion (not already processed)
+            const latestSuggestion = newSuggestions[0]; // Most recent suggestion
+            const isNewSuggestion = latestSuggestion.id !== lastProcessedSuggestionId.current;
+            
+            // Check if enough time has passed since the last toast
+            const timeSinceLastToast = Date.now() - lastToastTime;
+            const minToastInterval = 2000; // 2 seconds minimum between toasts
+            
+            if (isNewSuggestion && timeSinceLastToast >= minToastInterval) {
+              // Show toast for ALL users (including the one who submitted it)
+              const toastMessage = `${latestSuggestion.username} suggests: "${latestSuggestion.message}"`;
+              console.log(`[SCENARIO SELECTOR] Showing toast: ${toastMessage} (isHost: ${isHost})`);
+              showToast(toastMessage, 'info'); // Show for 3 seconds (default)
+              
+              // Update tracking
+              setLastToastTime(Date.now());
+              setLastToastSuggestionId(latestSuggestion.id);
+              lastProcessedSuggestionId.current = latestSuggestion.id;
+              setLastSeenSuggestionId(latestSuggestion.id);
+              
+              console.log(`[SCENARIO SELECTOR] Marked toast as shown for suggestion: ${latestSuggestion.id}`);
+            } else if (!isNewSuggestion) {
+              console.log(`[SCENARIO SELECTOR] Skipping toast - same suggestion as last processed (isHost: ${isHost})`);
+            } else {
+              console.log(`[SCENARIO SELECTOR] Skipping toast - too soon since last toast (${timeSinceLastToast}ms < ${minToastInterval}ms) (isHost: ${isHost})`);
+            }
+          }
+          
+          // Update suggestions list (keep only latest 3)
+          const limitedSuggestions = newSuggestions.slice(0, 3);
+          setRecentSuggestions(limitedSuggestions);
+          
+          // Store last seen suggestion ID in localStorage for persistence
+          if (limitedSuggestions.length > 0) {
+            localStorage.setItem(`lastSeenSuggestionId_${initialRoomCode}`, limitedSuggestions[0].id);
+          }
+          
+          // Update last suggestion time
+          if (newSuggestions.length > 0) {
+            setLastSuggestionTime(new Date(newSuggestions[0].created_at).getTime());
+          }
+        } else {
+          console.error(`[SCENARIO SELECTOR] Failed to fetch suggestions, status: ${response.status}`);
+        }
+      } catch (error) {
+        console.error('Failed to fetch suggestions:', error);
+      }
+    };
+    
+    // Initial poll
+    pollSuggestions();
+    
+    // Poll every 3 seconds
+    const interval = setInterval(pollSuggestions, 3000);
+    
+    return () => {
+      console.log(`[SCENARIO SELECTOR] Stopping suggestion polling for room ${initialRoomCode}`);
+      clearInterval(interval);
+    };
+  }, [initialRoomCode, lastSeenSuggestionId, lastToastTime, isHost, showToast]);
+  
+  // Reset toast flag when room code changes
+  useEffect(() => {
+    if (initialRoomCode) {
+      setLastToastSuggestionId(null);
+      setLastToastTime(0);
+      lastProcessedSuggestionId.current = null;
+      console.log(`[SCENARIO SELECTOR] Reset toast flag for new room: ${initialRoomCode}`);
+    }
+  }, [initialRoomCode]);
+  
   const fetcher = useFetcher<any>();
   const voteFetcher = useFetcher<any>();
   const scenarioFetcher = useFetcher<any>();
@@ -109,7 +233,8 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
   const [diceRolls, setDiceRolls] = useState<Record<number, number>>({});
   const [adventureStarted, setAdventureStarted] = useState(false);
   const [diceRollComplete, setDiceRollComplete] = useState(false);
-  const [lastVoteTime, setLastVoteTime] = useState<string>('');
+  const [winningScenarioFromDice, setWinningScenarioFromDice] = useState<AdventureScenario | null>(null);
+  const [lastVoteTime, setLastVoteTime] = useState<string>(new Date().toISOString());
   const [scenarioSelectionInProgress, setScenarioSelectionInProgress] = useState(false);
   const [diceSelectionApplied, setDiceSelectionApplied] = useState(false);
   
@@ -123,9 +248,9 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
   const [isInitializingDice, setIsInitializingDice] = useState(false);
   const [isSubmittingRoll, setIsSubmittingRoll] = useState(false);
   const [showDiceRoll, setShowDiceRoll] = useState(false);
+  const [diceVotingStarted, setDiceVotingStarted] = useState(false); // Track if dice voting has started
   // Dice voting state - track demo rolls vs actual votes
   const [demoRolls, setDemoRolls] = useState<Record<number, number>>({});
-  const [diceVotingStarted, setDiceVotingStarted] = useState(false);
   const [userSlotsToRoll, setUserSlotsToRoll] = useState<Set<number>>(new Set());
   
   // Calculate how many active slots the current user controls
@@ -139,10 +264,18 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
   ).length;
   
   // Get the indices of slots owned by the current user for voting
-  const userSlotIndices = partySlots
-    .map((slot, index) => ({ slot, index }))
-    .filter(({ slot }) => (slot.type === 'Human' || slot.type === 'AI') && slot.userId === currentUserId)
-    .map(({ index }) => index);
+  const userSlotIndices = useMemo(() => {
+    return partySlots
+      .map((slot, index) => ({ slot, index }))
+      .filter(({ slot }) => (slot.type === 'Human' || slot.type === 'AI') && slot.userId === currentUserId)
+      .map(({ index }) => index);
+  }, [partySlots, currentUserId]);
+  
+  // Initialize userSlotsToRoll for all users when component mounts or when userSlotIndices changes
+  useEffect(() => {
+    setUserSlotsToRoll(new Set(userSlotIndices));
+    console.log(`[SCENARIO SELECTOR] Initialized userSlotsToRoll for user ${currentUserId}:`, userSlotIndices);
+  }, [userSlotIndices, currentUserId]);
   
   // Count votes cast by current user
   const userVotesCast = Object.values(userVotes).filter(v => v !== null).length;
@@ -240,6 +373,8 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
         formData.append('intent', 'getDiceRollingState');
         formData.append('roomCode', roomCode);
         
+        console.log(`[SCENARIO SELECTOR] Fetching dice state for room: ${roomCode}`);
+        
         // Add timeout to fetch request
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
@@ -252,11 +387,32 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
         
         clearTimeout(timeoutId);
         
+        console.log(`[SCENARIO SELECTOR] Dice fetch response status: ${response.status}`);
+        console.log(`[SCENARIO SELECTOR] Dice fetch response headers:`, Object.fromEntries(response.headers.entries()));
+        
+        // Check if response is HTML instead of JSON
+        const contentType = response.headers.get('content-type');
+        console.log(`[SCENARIO SELECTOR] Dice fetch content-type: ${contentType}`);
+        
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         
+        // Check if the response is HTML (which would indicate a 404 or error page)
+        if (contentType && contentType.includes('text/html')) {
+          const htmlText = await response.text();
+          console.error(`[SCENARIO SELECTOR] Received HTML instead of JSON:`, htmlText.substring(0, 200));
+          throw new Error('Received HTML response instead of JSON');
+        }
+        
         const result = await response.json();
+        console.log(`[SCENARIO SELECTOR] Dice fetch response data:`, result);
+        
+        // Validate the response structure
+        if (!result || typeof result !== 'object') {
+          console.error('[SCENARIO SELECTOR] Invalid dice response structure:', result);
+          return;
+        }
         
         if (result.success && result.diceRollingState) {
           setDiceState(result.diceRollingState);
@@ -269,10 +425,15 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
           }
         }
       } catch (error) {
+        console.error('[SCENARIO SELECTOR] Error fetching dice state:', error);
         if (error instanceof Error && error.name === 'AbortError') {
-          console.error('Dice state fetch timed out after 5 seconds');
+          console.error('[SCENARIO SELECTOR] Dice state fetch timed out after 5 seconds');
         } else {
-          console.error('Error fetching dice state:', error);
+          console.error('[SCENARIO SELECTOR] Dice fetch error details:', {
+            name: error.name,
+            message: error.message,
+            stack: error.stack
+          });
         }
         // Don't clear state on error - keep existing state
       }
@@ -377,6 +538,9 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
     
     // Submit vote to server for real-time updates
     if (roomCode) {
+      const slot = partySlots[slotIndex];
+      const characterId = slot?.characterId || '';
+      
       const formData = new FormData();
       formData.append('intent', 'castVote');
       formData.append('scenarioId', scenarioId);
@@ -384,15 +548,29 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
       formData.append('roomCode', roomCode);
       formData.append('username', username);
       formData.append('userId', currentUserId || 'unknown');
+      formData.append('characterId', characterId);
       formData.append('partySlots', JSON.stringify(partySlots));
-      formData.append('scenarioSetId', roomCode); // Use roomCode as scenarioSetId for now
+      // Note: scenarioSetId is not needed for castVote intent
       
-      console.log(`[VOTING] Submitting vote for scenario ${scenarioId} from slot ${slotIndex} in room ${roomCode}`);
-      voteFetcher.submit(formData, { method: 'post', action: '/game' });
+      console.log(`[VOTING] Submitting vote for scenario ${scenarioId} from character ${characterId} (slot ${slotIndex}) in room ${roomCode}`);
+      console.log(`[VOTING] Form data:`, {
+        intent: 'castVote',
+        scenarioId,
+        slotIndex,
+        roomCode,
+        username,
+        userId: currentUserId || 'unknown',
+        characterId,
+        hasCharacterId: !!characterId
+      });
       
-      // Also log the fetcher state
-      console.log(`[VOTING] VoteFetcher state:`, voteFetcher.state);
-      console.log(`[VOTING] VoteFetcher data:`, voteFetcher.data);
+      try {
+        voteFetcher.submit(formData, { method: 'post', action: '/game' });
+        console.log(`[VOTING] Vote submission initiated successfully`);
+      } catch (error) {
+        console.error(`[VOTING] Vote submission failed:`, error);
+        showToast('Failed to submit vote. Please try again.', 'error');
+      }
     }
   };
 
@@ -438,6 +616,9 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
     
     // Submit regenerate vote to server for real-time updates
     if (roomCode) {
+      const slot = partySlots[slotIndex];
+      const characterId = slot?.characterId || '';
+      
       const formData = new FormData();
       formData.append('intent', 'castVote');
       formData.append('scenarioId', 'REGENERATE'); // Special scenario ID for regenerate
@@ -445,16 +626,35 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
       formData.append('roomCode', roomCode);
       formData.append('username', username);
       formData.append('userId', currentUserId || 'unknown');
+      formData.append('characterId', characterId);
       formData.append('partySlots', JSON.stringify(partySlots));
-      formData.append('scenarioSetId', roomCode); // Use roomCode as scenarioSetId for now
+      // Note: scenarioSetId is not needed for castVote intent
       
-      voteFetcher.submit(formData, { method: 'post', action: '/game' });
+      console.log(`[VOTING] Submitting regenerate vote from character ${characterId} (slot ${slotIndex}) in room ${roomCode}`);
+      console.log(`[VOTING] Form data:`, {
+        intent: 'castVote',
+        scenarioId: 'REGENERATE',
+        slotIndex,
+        roomCode,
+        username,
+        userId: currentUserId || 'unknown',
+        characterId,
+        hasCharacterId: !!characterId
+      });
+      
+      try {
+        voteFetcher.submit(formData, { method: 'post', action: '/game' });
+        console.log(`[VOTING] Regenerate vote submission initiated successfully`);
+      } catch (error) {
+        console.error(`[VOTING] Regenerate vote submission failed:`, error);
+        showToast('Failed to submit regenerate vote. Please try again.', 'error');
+      }
     }
   };
 
   const userHasCompletedVoting = userVotesCast >= userActiveSlots;
   // Calculate total votes based on actual userVotes state (more accurate)
-  const totalVotesCast = Object.keys(userVotes).length;
+  const totalVotesCast = allVotes.length;
   const regenerateVoteCount = regenerationVotes;
   const allHaveVoted = totalVotesCast >= totalActiveSlots;
 
@@ -496,10 +696,9 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
     try {
       setIsInitializingDice(true);
       
-      // Initialize dice voting state
-      setDiceVotingStarted(true);
-      setDemoRolls({});
-      setUserSlotsToRoll(new Set(userSlotIndices));
+      // Initialize dice voting state (remove demo rolls)
+      setDemoRolls({}); // Clear any demo rolls
+      // Note: setUserSlotsToRoll is now handled automatically via useEffect
       
       // Call API to start dice rolling with timeout
       const controller = new AbortController();
@@ -554,7 +753,9 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
         }, 500);
         
         showToast('Dice voting started! Use the 3D dice to roll for each of your active characters.', 'success');
-        showToast('You can roll as many times as you want before submitting your final votes.', 'info');
+        setDiceVotingStarted(true); // Set the dice voting started flag
+        // Remove the demo rolls info toast
+        // showToast('You can roll as many times as you want before submitting your final votes.', 'info');
         // The dice rolling state will be updated via polling, no need for showDiceRoll
       } else {
         console.error('[VERIFICATION] Failed to start dice rolling');
@@ -594,16 +795,19 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
         totalActiveSlots: partySlots.filter(slot => slot.type === 'Human' || slot.type === 'AI').length
       });
       
-      // Check if this user has dice voting started
-      const currentUserHasVotingStarted = diceVotingStarted;
-      
-      if (!currentUserHasVotingStarted) {
-        console.log('[DICE VOTING] User has not started voting yet, storing as demo roll');
+      // Check if dice voting is active based on server state
+      const isVotingActive = diceState && diceState.status === 'rolling';
+
+      if (!isVotingActive) {
+        console.log('[DICE VOTING] Voting is not active, storing as demo roll');
         // Store as demo roll for preview
         setDemoRolls(prev => ({ ...prev, [slotIndex]: result }));
         
         // Show info message about demo mode
-        showToast(`Demo roll: ${result} for ${partySlots[slotIndex]?.characterName || `Slot ${slotIndex}`}`, 'info');
+        const characterId = partySlots[slotIndex]?.characterId;
+        const character = activePartyMembers.find(c => c.id === characterId);
+        const characterName = character?.name || partySlots[slotIndex]?.username || `Slot ${slotIndex}`;
+        showToast(`Demo roll: ${result} for ${characterName}`, 'info');
         return;
       }
       
@@ -612,15 +816,22 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
         console.log('[DICE VOTING] User has already rolled for this slot, storing as demo roll');
         setDemoRolls(prev => ({ ...prev, [slotIndex]: result }));
         
-        const characterName = partySlots[slotIndex]?.characterName || `Slot ${slotIndex}`;
+        // Get character name from the character object, not from the slot
+        const characterId = partySlots[slotIndex]?.characterId;
+        const character = activePartyMembers.find(c => c.id === characterId);
+        const characterName = character?.name || partySlots[slotIndex]?.username || `Slot ${slotIndex}`;
         showToast(`Demo roll: ${result} for ${characterName} (already voted)`, 'info');
         return;
       }
       
-      // This is an actual voting roll - store both demo and voting state
-      setDemoRolls(prev => ({ ...prev, [slotIndex]: result }));
+      // This is an actual voting roll - use definitive values (remove demo rolls)
+      setDemoRolls(prev => {
+        const newDemoRolls = { ...prev };
+        delete newDemoRolls[slotIndex]; // Remove demo roll
+        return newDemoRolls;
+      });
       
-      // Optimistic update for UI
+      // Optimistic update for UI with definitive value
       setDiceRolls(prev => ({ ...prev, [slotIndex]: result }));
       
       // Call API to record the roll with timeout
@@ -705,6 +916,10 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
         // Check if current user has completed all their rolls
         const userCompleted = userSlotsToRoll.size === 1 && !userSlotsToRoll.has(slotIndex);
         if (userCompleted) {
+          // Get character name from the character object, not from the slot
+          const characterId = partySlots[slotIndex]?.characterId;
+          const character = activePartyMembers.find(c => c.id === characterId);
+          const characterName = character?.name || partySlots[slotIndex]?.username || `Slot ${slotIndex}`;
           showToast(`All your characters have rolled! Waiting for other players...`, 'success');
         }
       }
@@ -788,7 +1003,7 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
   const currentScenarios = displayedScenarios;
 
   // Determine winning scenario from dice roll
-  const getWinningScenarioFromDiceRoll = useCallback(() => {
+  const getWinningScenarioFromDiceRoll = useCallback(async () => {
     if (!diceState || diceState.status !== 'completed') return null;
     
     // Guard against missing scenarios
@@ -797,32 +1012,211 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
       return null;
     }
     
-    let winnerSlotIndex = -1;
+    let winnerCharacterId = '';
     
-    if (diceState && diceState.winner !== null) {
-      winnerSlotIndex = diceState.winner;
+    if (diceState && diceState.winnerCharacterId) {
+      winnerCharacterId = diceState.winnerCharacterId;
+    } else if (diceState && diceState.winner !== null) {
+      // Fallback: try to find character from slot index
+      const winnerSlot = partySlots[diceState.winner];
+      if (winnerSlot) {
+        winnerCharacterId = winnerSlot.characterId || '';
+      }
     }
     
-    const winnerVote = userVotes[winnerSlotIndex];
-    if (!winnerVote) {
-      console.error('[SCENARIO SELECTOR] Dice winner determination failed:', {
+    if (!winnerCharacterId) {
+      console.error('[SCENARIO SELECTOR] Could not determine winner character ID from dice roll:', {
         diceState,
-        userVotes,
-        votesLoaded,
         partySlots
       });
-      showToast('Dice tiebreaker completed, but winner did not vote for a scenario. Please select manually.', 'warning');
+      showToast('Dice tiebreaker completed, but could not determine winner. Please select manually.', 'warning');
       return null;
     }
-    
-    const winningScenario = currentScenarios.find(s => s.id === winnerVote);
-    if (!winningScenario) {
-      console.warn('[SCENARIO SELECTOR] Winning scenario not found for vote:', winnerVote);
+
+    // Get the actual user votes from the database instead of local state
+    try {
+      const response = await fetch(`/api/room/votes?roomCode=${encodeURIComponent(initialRoomCode || '')}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch scenario votes');
+      }
+      
+      const data = await response.json();
+      const scenarioVotes = data.votes || [];
+      
+      // Find the winner's vote using multiple robust lookup strategies
+      let winnerVoteData = null;
+      let winnerVote = null;
+      
+      // Debug: Log winner information
+      const winnerSlot = partySlots[diceState.winner];
+      console.log('[DICE WINNER DEBUG] Winner info:', {
+        diceStateWinner: diceState.winner,
+        winnerSlot: winnerSlot,
+        winnerCharacterId: winnerCharacterId,
+        winnerUserId: winnerSlot?.userId,
+        winnerCharacterName: winnerSlot?.characterName,
+        winnerUsername: winnerSlot?.username
+      });
+      
+      // Debug: Log all votes with detailed information
+      console.log('[DICE WINNER DEBUG] All votes:', scenarioVotes.map(v => ({
+        slotIndex: v.slotIndex,
+        characterId: v.characterId,
+        userId: v.userId,
+        scenarioId: v.scenarioId,
+        timestamp: v.timestamp
+      })));
+      
+      // Strategy 1: Exact match by slotIndex and characterId (primary method)
+      winnerVoteData = scenarioVotes.find(vote => 
+        vote.slotIndex === diceState.winner && vote.characterId === winnerCharacterId && vote.characterId !== 'unknown'
+      );
+      console.log('[DICE WINNER DEBUG] Strategy 1 result:', winnerVoteData);
+      
+      // Strategy 2: Match by slotIndex only (if characterId is unknown or missing)
+      if (!winnerVoteData) {
+        winnerVoteData = scenarioVotes.find(vote => 
+          vote.slotIndex === diceState.winner && vote.scenarioId
+        );
+        console.log('[DICE WINNER DEBUG] Strategy 2 result:', winnerVoteData);
+      }
+      
+      // Strategy 3: Match by characterId only (if slotIndex lookup fails)
+      if (!winnerVoteData) {
+        winnerVoteData = scenarioVotes.find(vote => 
+          vote.characterId === winnerCharacterId && vote.characterId !== 'unknown' && vote.scenarioId
+        );
+        console.log('[DICE WINNER DEBUG] Strategy 3 result:', winnerVoteData);
+      }
+      
+      // Strategy 4: Match by userId and slotIndex (for cases where characterId is unreliable)
+      if (!winnerVoteData) {
+        const winnerSlot = partySlots[diceState.winner];
+        if (winnerSlot && winnerSlot.userId) {
+          winnerVoteData = scenarioVotes.find(vote => 
+            vote.slotIndex === diceState.winner && vote.userId === winnerSlot.userId && vote.scenarioId
+          );
+          console.log('[DICE WINNER DEBUG] Strategy 4 result:', winnerVoteData);
+        }
+      }
+      
+      // Strategy 5: Match by character name from party data (last resort)
+      if (!winnerVoteData) {
+        const winnerSlot = partySlots[diceState.winner];
+        const winnerName = winnerSlot?.characterName || winnerSlot?.username || '';
+        if (winnerName) {
+          // Find votes where the character name matches (this is a heuristic)
+          winnerVoteData = scenarioVotes.find(vote => {
+            // Try to match by looking up the character name from the vote's slot
+            const voteSlot = partySlots[vote.slotIndex];
+            const voteCharacterName = voteSlot?.characterName || voteSlot?.username || '';
+            return voteCharacterName === winnerName && vote.scenarioId;
+          });
+          console.log('[DICE WINNER DEBUG] Strategy 5 result:', winnerVoteData);
+        }
+      }
+      
+      // Strategy 6: Direct slot lookup with any scenarioId (emergency fallback)
+      if (!winnerVoteData) {
+        winnerVoteData = scenarioVotes.find(vote => 
+          vote.slotIndex === diceState.winner
+        );
+        console.log('[DICE WINNER DEBUG] Strategy 6 (emergency) result:', winnerVoteData);
+      }
+      
+      winnerVote = winnerVoteData?.scenarioId;
+      
+      if (!winnerVote) {
+        console.error('[SCENARIO SELECTOR] Dice winner determination failed - winner character did not vote:', {
+          diceState,
+          winnerCharacterId,
+          winnerSlotIndex: diceState.winner,
+          scenarioVotes: scenarioVotes.map(v => ({ 
+            scenarioId: v.scenarioId, 
+            userId: v.userId, 
+            slotIndex: v.slotIndex, 
+            characterId: v.characterId,
+            timestamp: v.timestamp 
+          })),
+          partySlots
+        });
+        
+        // Show more detailed error message
+        const winnerSlot = partySlots[diceState.winner];
+        const winnerName = winnerSlot?.characterName || winnerSlot?.username || 'Unknown';
+        const winnerRoll = diceState.rolls[diceState.winner] || '?';
+        
+        // Find all votes for this winner (by slot and character)
+        const winnerVotes = scenarioVotes.filter(v => 
+          v.slotIndex === diceState.winner || v.characterId === winnerCharacterId
+        );
+        
+        // Get votes by each strategy for debugging
+        const strategy1Votes = scenarioVotes.filter(v => 
+          v.slotIndex === diceState.winner && v.characterId === winnerCharacterId && v.characterId !== 'unknown'
+        );
+        const strategy2Votes = scenarioVotes.filter(v => 
+          v.slotIndex === diceState.winner && v.scenarioId
+        );
+        const strategy3Votes = scenarioVotes.filter(v => 
+          v.characterId === winnerCharacterId && v.characterId !== 'unknown' && v.scenarioId
+        );
+        const strategy4Votes = scenarioVotes.filter(v => {
+          const voteSlot = partySlots[v.slotIndex];
+          return v.slotIndex === diceState.winner && voteSlot?.userId === winnerSlot?.userId && v.scenarioId;
+        });
+        const strategy5Votes = scenarioVotes.filter(v => {
+          const voteSlot = partySlots[v.slotIndex];
+          const voteCharacterName = voteSlot?.characterName || voteSlot?.username || '';
+          const winnerCharacterName = winnerSlot?.characterName || winnerSlot?.username || '';
+          return voteCharacterName === winnerCharacterName && v.scenarioId;
+        });
+        
+        console.log('[SCENARIO SELECTOR] Winner votes debug:', { 
+          winnerVotes,
+          winnerSlotIndex: diceState.winner,
+          winnerCharacterId,
+          allVotes: scenarioVotes,
+          strategy1Votes,
+          strategy2Votes,
+          strategy3Votes,
+          strategy4Votes,
+          strategy5Votes
+        });
+        
+        // Show detailed error with what votes were found by each strategy
+        const voteDetails = `
+Strat 1 (slot+char): ${strategy1Votes.length} votes (${strategy1Votes.map(v => v.scenarioId).join(', ')})
+Strat 2 (slot only): ${strategy2Votes.length} votes (${strategy2Votes.map(v => v.scenarioId).join(', ')})
+Strat 3 (char only): ${strategy3Votes.length} votes (${strategy3Votes.map(v => v.scenarioId).join(', ')})
+Strat 4 (user+slot): ${strategy4Votes.length} votes (${strategy4Votes.map(v => v.scenarioId).join(', ')})
+Strat 5 (name match): ${strategy5Votes.length} votes (${strategy5Votes.map(v => v.scenarioId).join(', ')})
+        `;
+        
+        showToast(`🎉 Winner: ${winnerName} rolled ${winnerRoll}!\nWinner did not vote for a scenario. Please select manually.${voteDetails}`, 'warning');
+        
+        return null;
+      }
+      
+      const winningScenario = currentScenarios.find(s => s.id === winnerVote);
+      if (!winningScenario) {
+        console.warn('[SCENARIO SELECTOR] Winning scenario not found for vote:', winnerVote);
+        return null;
+      }
+
+      console.log('[SCENARIO SELECTOR] Winning scenario determined by dice:', {
+        winnerCharacterId,
+        winnerVote,
+        scenario: winningScenario.title
+      });
+      
+      return winningScenario;
+    } catch (error) {
+      console.error('[SCENARIO SELECTOR] Error fetching scenario votes for dice winner:', error);
+      showToast('Error determining winner from dice roll. Please select scenario manually.', 'error');
       return null;
     }
-    
-    return winningScenario;
-  }, [diceState, currentScenarios, userVotes, voteCounts, votesLoaded, showToast, partySlots]);
+  }, [diceState, currentScenarios, initialRoomCode, showToast, partySlots]);
   
   // Poll for new suggestions every 3 seconds
   useEffect(() => {
@@ -980,6 +1374,29 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
           console.log(`[SCENARIO SELECTOR] Loaded ${voteUpdates.length} votes from room ${initialRoomCode}`);
           console.log(`[SCENARIO SELECTOR] Vote data:`, voteUpdates);
           
+          // Debug: Log detailed vote information
+          console.log(`[VOTE DEBUG] Processing ${voteUpdates.length} votes with partyCharacters:`, partyCharacters.length);
+          voteUpdates.forEach((vote: ScenarioVote, index) => {
+            const slotInfo = partySlots[vote.slotIndex] || {};
+            const characterId = slotInfo.characterId;
+            const character = partyCharacters.find(c => c.id === characterId);
+            
+            // FIXED: Use character name from partyCharacters for accurate display
+            const characterName = character ? character.name : (slotInfo.characterName || slotInfo.username || `Player ${vote.slotIndex}`);
+            
+            console.log(`[VOTE DEBUG] Vote ${index}:`, {
+              scenarioId: vote.scenarioId,
+              slotIndex: vote.slotIndex,
+              userId: vote.userId,
+              timestamp: vote.timestamp,
+              slotCharacterId: characterId,
+              foundCharacter: character ? { id: character.id, name: character.name, userId: character.userId } : null,
+              slotUsername: slotInfo.username,
+              slotCharacterName: slotInfo.characterName,
+              finalCharacterName: characterName
+            });
+          });
+          
           // Update vote counts by scenario
           const updatedVoteCounts: Record<string, number> = {};
           voteUpdates.forEach((vote: ScenarioVote) => {
@@ -1087,7 +1504,7 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
             // Update userVotes state based on the vote data - COMPLETELY REPLACE with loaded votes
             const updatedUserVotes: Record<number, string | null> = {};
             voteUpdates.forEach((vote: ScenarioVote) => {
-              if (vote.slotIndex !== undefined) {
+              if (vote.slotIndex !== undefined && vote.userId === currentUserId) {
                 updatedUserVotes[vote.slotIndex] = vote.scenarioId;
               }
             });
@@ -1095,7 +1512,7 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
             setUserVotes(updatedUserVotes);
             
             // Check for tiebreaker after loading votes on page refresh
-            const totalVotesCast = Object.keys(updatedUserVotes).length;
+            const totalVotesCast = allVotes.length;
             const totalActiveSlots = partySlots.filter(slot => slot.type === 'Human' || slot.type === 'AI').length;
             const allHaveVoted = totalVotesCast >= totalActiveSlots;
             
@@ -1198,7 +1615,18 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
       if (voteFetcher.data.success) {
         showToast(voteFetcher.data.message || 'Vote cast successfully!', 'success');
       } else if (voteFetcher.data.error) {
-        showToast(voteFetcher.data.error, 'error');
+        // Extract error message - handle both string and object error formats
+        let errorMsg = 'Failed to cast vote.';
+        
+        if (typeof voteFetcher.data.error === 'string') {
+          errorMsg = voteFetcher.data.error;
+        } else if (voteFetcher.data.error && typeof voteFetcher.data.error === 'object') {
+          errorMsg = voteFetcher.data.error.userMessage || 
+                    voteFetcher.data.error.message || 
+                    'An error occurred while casting your vote';
+        }
+        
+        showToast(errorMsg, 'error');
       }
     }
   }, [voteFetcher.data, voteFetcher.state, showToast]);
@@ -1244,9 +1672,16 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
       if (scenarioFetcher.data.error) {
         console.error('[SCENARIO SELECTOR] Scenario selection error:', scenarioFetcher.data.error);
         // Extract error message - handle both string and object error formats
-        const errorMsg = typeof scenarioFetcher.data.error === 'string' 
-          ? scenarioFetcher.data.error 
-          : scenarioFetcher.data.error?.message || scenarioFetcher.data.error?.userMessage || 'Failed to save scenario selection';
+        let errorMsg = 'Failed to save scenario selection';
+        
+        if (typeof scenarioFetcher.data.error === 'string') {
+          errorMsg = scenarioFetcher.data.error;
+        } else if (scenarioFetcher.data.error && typeof scenarioFetcher.data.error === 'object') {
+          errorMsg = scenarioFetcher.data.error.userMessage || 
+                    scenarioFetcher.data.error.message || 
+                    'An error occurred while saving the scenario selection';
+        }
+        
         showToast(errorMsg, 'error');
         setScenarioSelectionInProgress(false);
         setDiceSelectionApplied(false);
@@ -1262,9 +1697,10 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
         const redirectUrl = scenarioFetcher.data.redirectTo;
         console.log('[SCENARIO SELECTOR] Server requested redirect to:', redirectUrl);
         showToast('🎉 Scenario winner saved! Proceeding to map generation...', 'success');
-        // Use full navigation to ensure loader runs
-        window.location.assign(redirectUrl);
-        return;
+        setScenarioSelectionInProgress(false);
+        setDiceSelectionApplied(false);
+        // Use fetcher navigation to trigger loader properly
+        window.location.href = redirectUrl;
       } else if (scenarioFetcher.data && !scenarioFetcher.data.error && !scenarioFetcher.data.success) {
         // Server redirected (no JSON response body)
         console.log('[SCENARIO SELECTOR] Server redirect detected (scenario saved and room updated)');
@@ -1311,7 +1747,7 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
             // Update userVotes state based on the vote data - COMPLETELY REPLACE with loaded votes
             const updatedUserVotes: Record<number, string | null> = {};
             voteUpdates.forEach((vote: ScenarioVote) => {
-              if (vote.slotIndex !== undefined) {
+              if (vote.slotIndex !== undefined && vote.userId === currentUserId) {
                 updatedUserVotes[vote.slotIndex] = vote.scenarioId;
               }
             });
@@ -1339,7 +1775,7 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                 }
                 
                 // Check for tiebreaker after initial votes are loaded
-                const totalVotesCast = Object.keys(updatedUserVotes).length;
+                const totalVotesCast = allVotes.length;
                 const totalActiveSlots = partySlots.filter(slot => slot.type === 'Human' || slot.type === 'AI').length;
                 const allHaveVoted = totalVotesCast >= totalActiveSlots;
                 
@@ -1348,7 +1784,7 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                 const tiedScenarios = updatedScenarios.filter((s: AdventureScenario) => (updatedVoteCounts[s.id] || 0) === maxVotes);
                 const hasClearWinner = tiedScenarios.length === 1 && maxVotes > 0;
                 const regenerateVoteCount = Object.values(updatedUserVotes).filter(vote => vote === 'REGENERATE').length;
-                const totalVotesCastForRegen = Object.keys(updatedUserVotes).length;
+                const totalVotesCastForRegen = allVotes.length;
                 const regenerateMajority = regenerateVoteCount > totalVotesCastForRegen / 2;
                 
                 const needsTiebreakerNow = allHaveVoted && !regenerateMajority && !hasClearWinner && maxVotes > 0;
@@ -1408,7 +1844,7 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
             // Update userVotes state based on the new vote data - COMPLETELY REPLACE with loaded votes
             const updatedUserVotes: Record<number, string | null> = {};
             voteUpdates.forEach((vote: ScenarioVote) => {
-              if (vote.slotIndex !== undefined) {
+              if (vote.slotIndex !== undefined && vote.userId === currentUserId) {
                 updatedUserVotes[vote.slotIndex] = vote.scenarioId;
               }
             });
@@ -1436,7 +1872,36 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                   const voteMessages = newVotes.map((vote: ScenarioVote) => {
                     const scenario = updatedScenarios.find((s: AdventureScenario) => s.id === vote.scenarioId);
                     const scenarioTitle = scenario ? scenario.title : 'Unknown Scenario';
-                    return `${vote.userId} voted for "${scenarioTitle}"`;
+                    
+                    // Get the correct character information for the vote
+                    const slotInfo = partySlots[vote.slotIndex] || {};
+                    const characterId = slotInfo.characterId;
+                    const character = partyCharacters.find(c => c.id === characterId);
+                    const characterName = character?.name || slotInfo.characterName || slotInfo.username || `Player ${vote.slotIndex}`;
+                    
+                    // Debug logging for vote toast
+                    console.log('[VOTE TOAST] Vote notification:', {
+                      voteSlotIndex: vote.slotIndex,
+                      voteUserId: vote.userId,
+                      slotInfoCharacterId: characterId,
+                      foundCharacter: character ? { id: character.id, name: character.name } : null,
+                      fallbackName: slotInfo.characterName || slotInfo.username || `Player ${vote.slotIndex}`,
+                      finalCharacterName: characterName,
+                      scenarioTitle,
+                      currentUserId
+                    });
+                    
+                    // Additional debug for character mismatch in toast
+                    if (characterId && !character) {
+                      console.warn('[VOTE TOAST] Character not found in partyCharacters:', {
+                        characterId,
+                        slotInfo,
+                        availableCharacters: partyCharacters.map(c => ({ id: c.id, name: c.name })),
+                        voteData: { slotIndex: vote.slotIndex, userId: vote.userId }
+                      });
+                    }
+                    
+                    return `${characterName} (Slot ${vote.slotIndex}) voted for "${scenarioTitle}"`;
                   });
                   
                   if (voteMessages.length > 0) {
@@ -1489,6 +1954,25 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
   
   // Tiebreaker logic for scenarios with no clear winner
   const needsTiebreaker: boolean = allHaveVoted && !regenerateMajority && !hasClearWinner && maxPossibleVotes > 0;
+  
+  // Determine winning scenario for display
+  const winningScenarioForDisplay = useMemo(() => {
+    if (!shouldShowStartAdventure || !currentScenarios || currentScenarios.length === 0) {
+      return null;
+    }
+    
+    if (needsTiebreaker && diceRollComplete && winningScenarioFromDice) {
+      return winningScenarioFromDice;
+    }
+    
+    // Find scenario with most votes
+    const tiedScenarios = currentScenarios.filter(s => voteCounts[s.id] === maxVotes);
+    if (tiedScenarios.length === 1) {
+      return tiedScenarios[0];
+    }
+    
+    return null;
+  }, [shouldShowStartAdventure, needsTiebreaker, diceRollComplete, winningScenarioFromDice, currentScenarios, maxVotes, voteCounts]);
   
   // Debug logging for tiebreaker logic
   useEffect(() => {
@@ -1646,14 +2130,16 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
     
     if (diceRollComplete && diceState && diceState.status === 'completed' && !scenarioSelectionInProgress) {
       console.log('[SCENARIO SELECTOR] Auto-submitting scenario selection from dice tiebreaker');
-      const winningScenario = getWinningScenarioFromDiceRoll();
-      if (winningScenario) {
-        console.log('[SCENARIO SELECTOR] Dice winner scenario:', { id: winningScenario.id, title: winningScenario.title });
-        setAdventureStarted(true);
-        handleSelectScenario(winningScenario);
-      } else {
-        console.warn('[SCENARIO SELECTOR] Could not determine winning scenario from dice roll');
-      }
+      getWinningScenarioFromDiceRoll().then(winningScenario => {
+        if (winningScenario) {
+          console.log('[SCENARIO SELECTOR] Dice winner scenario:', { id: winningScenario.id, title: winningScenario.title });
+          setWinningScenarioFromDice(winningScenario);
+          setAdventureStarted(true);
+          handleSelectScenario(winningScenario);
+        } else {
+          console.warn('[SCENARIO SELECTOR] Could not determine winning scenario from dice roll');
+        }
+      });
     }
   }, [diceRollComplete, diceState, diceRolls, totalActiveSlots, getWinningScenarioFromDiceRoll, handleSelectScenario, scenarioSelectionInProgress]);
 
@@ -1875,12 +2361,45 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                               .map((vote: ScenarioVote, index: number) => {
                                 const timeAgo = new Date(vote.timestamp).toLocaleTimeString();
                                 const slotInfo = partySlots[vote.slotIndex] || {};
-                                const characterName = slotInfo.characterName || slotInfo.username || `Player ${vote.slotIndex}`;
+                                
+                                // Get the correct character information - FIXED: Use character name from partyCharacters if available, otherwise use slot fallback
+                                const characterId = slotInfo.characterId;
+                                const character = partyCharacters.find(c => c.id === characterId);
+                                
+                                // FIXED: Always prioritize the fallback name from slot data since it's more reliable
+                                // The characterId might not match between slots and partyCharacters due to data consistency issues
+                                const characterName = slotInfo.characterName 
+                                  ? slotInfo.characterName 
+                                  : (character ? character.name : (slotInfo.username || `Player ${vote.slotIndex}`));
+                                
+                                // Debug logging
+                                console.log('[VOTE DISPLAY] Vote lookup:', {
+                                  voteSlotIndex: vote.slotIndex,
+                                  voteUserId: vote.userId,
+                                  slotInfoCharacterId: characterId,
+                                  foundCharacter: character ? { id: character.id, name: character.name } : null,
+                                  slotCharacterName: slotInfo.characterName,
+                                  slotUsername: slotInfo.username,
+                                  finalCharacterName: characterName,
+                                  currentUserId,
+                                  isCurrentUser: vote.userId === currentUserId
+                                });
+                                
+                                // Additional debug for character mismatch - show warning if characterId exists but character not found and no fallback name is available
+                                if (characterId && !character && !slotInfo.characterName) {
+                                  console.warn('[VOTE DISPLAY] Character not found in partyCharacters and no fallback name from slot:', {
+                                    characterId,
+                                    slotInfo,
+                                    availableCharacters: partyCharacters.map(c => ({ id: c.id, name: c.name })),
+                                    voteData: { slotIndex: vote.slotIndex, userId: vote.userId }
+                                  });
+                                }
+                                
                                 return (
                                   <span key={index} className={`inline-block px-2 py-1 rounded mr-1 mb-1 ${
                                     vote.userId === currentUserId 
-                                      ? 'bg-green-100 text-green-800 border border-green-300' 
-                                      : 'bg-blue-100 text-blue-800'
+                                      ? 'bg-green-200 text-green-900 border border-green-400' 
+                                      : 'bg-blue-200 text-blue-900 border border-blue-400'
                                   }`}>
                                     {characterName} (Slot {vote.slotIndex}) • {timeAgo}
                                   </span>
@@ -1999,9 +2518,9 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
               <div className="mt-8 text-center">
                 <button
                   onClick={() => {
-                    if (winningScenario) {
+                    if (winningScenarioForDisplay) {
                       setAdventureStarted(true);
-                      handleSelectScenario(winningScenario);
+                      handleSelectScenario(winningScenarioForDisplay);
                     }
                   }}
                   className="bg-green-700 hover:bg-green-600 text-white font-bold py-4 px-8 rounded-lg transition duration-200 ease-in-out text-2xl"
@@ -2009,11 +2528,11 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                   🚀 Start Your Adventure!
                 </button>
                 
-                {winningScenario && (
+                {winningScenarioForDisplay && (
                   <div className="mt-4 p-4 bg-green-900 bg-opacity-30 rounded-lg border border-green-600">
                     <h4 className="text-lg font-semibold text-green-400 mb-2">Selected Scenario:</h4>
-                    <p className="text-green-300">{winningScenario.title}</p>
-                    <p className="text-sm text-green-400 mt-1">With {voteCounts[winningScenario.id] || 0} vote(s)</p>
+                    <p className="text-green-300">{winningScenarioForDisplay.title}</p>
+                    <p className="text-sm text-green-400 mt-1">With {voteCounts[winningScenarioForDisplay.id] || 0} vote(s)</p>
                   </div>
                 )}
               </div>
@@ -2062,51 +2581,42 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
               <div className="mt-8 text-center">
                 <div className="mb-4 p-4 bg-yellow-900 bg-opacity-30 rounded-lg border border-yellow-600">
                   <h4 className="text-lg font-semibold text-yellow-400">Tie-Breaking Required</h4>
-                  <p className="text-yellow-300">No scenario has a clear majority. Roll dice to determine the winner!</p>
+                  <p className="text-yellow-300">No scenario has a clear majority. Rolling dice to determine the winner...</p>
                 </div>
                 
-                <div className="space-y-4">
+                {/* Show dice rolling status */}
+                {showDiceRoll && (
+                  <div className="text-sm text-gray-300">
+                    {isInitializingDice ? 'Initializing dice rolling...' : 'Dice rolling in progress...'}
+                  </div>
+                )}
+                
+                {/* Debug button to test dice loading */}
+                <div className="mt-4">
                   <button
-                    onClick={handleTiebreakerDiceRoll}
-                    className="bg-yellow-700 hover:bg-yellow-600 text-white font-bold py-3 px-6 rounded-lg transition duration-200 ease-in-out text-xl"
+                    onClick={() => {
+                      console.log('Testing dice library loading...');
+                      console.log('DICE object:', typeof (window as unknown as {DICE?: object}).DICE);
+                      if ((window as unknown as {DICE?: object}).DICE) {
+                        console.log('DICE.dice_box:', typeof (window as unknown as {DICE?: {dice_box?: object}}).DICE?.dice_box);
+                      }
+                    }}
+                    className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded text-sm"
                   >
-                    🎲 Roll Dice to Break Tie!
+                    Debug Dice Loading
                   </button>
                   
-                  {/* Show dice rolling status */}
-                  {showDiceRoll && (
-                    <div className="text-sm text-gray-300">
-                      {isInitializingDice ? 'Initializing dice rolling...' : 'Dice rolling in progress...'}
-                    </div>
-                  )}
-                  
-                  {/* Debug button to test dice loading */}
-                  <div className="mt-4">
-                    <button
-                      onClick={() => {
-                        console.log('Testing dice library loading...');
-                        console.log('DICE object:', typeof (window as unknown as {DICE?: object}).DICE);
-                        if ((window as unknown as {DICE?: object}).DICE) {
-                          console.log('DICE.dice_box:', typeof (window as unknown as {DICE?: {dice_box?: object}}).DICE?.dice_box);
-                        }
-                      }}
-                      className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded text-sm"
-                    >
-                      Debug Dice Loading
-                    </button>
-                    
-                    {/* Manual dice roll test */}
-                    <button
-                      onClick={() => {
-                        console.log('Manual dice roll test...');
-                        setDiceRolls({0: 15, 1: 8}); // Simulate results
-                        setDiceRollComplete(true);
-                      }}
-                      className="bg-green-700 hover:bg-green-600 text-white font-bold py-2 px-4 rounded text-sm ml-2"
-                    >
-                      Test Dice Results
-                    </button>
-                  </div>
+                  {/* Manual dice roll test */}
+                  <button
+                    onClick={() => {
+                      console.log('Manual dice roll test...');
+                      setDiceRolls({0: 15, 1: 8}); // Simulate results
+                      setDiceRollComplete(true);
+                    }}
+                    className="bg-green-700 hover:bg-green-600 text-white font-bold py-2 px-4 rounded text-sm ml-2"
+                  >
+                    Test Dice Results
+                  </button>
                 </div>
               </div>
             )}
@@ -2151,7 +2661,6 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                                       currentUserId={currentUserId}
                                       diceState={diceState}
                                       onPlayerRollComplete={onPlayerRollComplete}
-                                      demoRolls={demoRolls}
                                     />
                                     </>                )}
                 
@@ -2167,11 +2676,11 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                       🎉 Winner: {diceState.players[diceState.winner!]?.characterName} rolled {diceState.rolls[diceState.winner!]}!
                     </div>
                     {(() => {
-                      const winningScenario = getWinningScenarioFromDiceRoll();
+                      const winningScenario = winningScenarioFromDice;
                       if (winningScenario) {
                         return (
                           <div className="mb-4">
-                            <div className="text-lg font-semibold">Starting: "{winningScenario.title}"</div>
+                            <div className="text-lg font-semibold">Starting: {winningScenario.title}</div>
                             <div className="text-sm text-gray-600 mb-4">{winningScenario.mapDescription}</div>
                           </div>
                         );
@@ -2191,7 +2700,7 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
                             return;
                           }
 
-                          const winningScenario = getWinningScenarioFromDiceRoll();
+                          const winningScenario = winningScenarioFromDice;
                           if (winningScenario) {
                             setAdventureStarted(true);
                             setScenarioSelectionInProgress(true);
@@ -2238,7 +2747,7 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
             <p className="text-gray-400">No suggestions yet. Be the first to suggest a scenario!</p>
           ) : (
             <div className="space-y-2">
-              {recentSuggestions.map((suggestion) => (
+              {recentSuggestions.slice(0, 3).map((suggestion) => (
                 <div key={suggestion.id} className="bg-gray-800 p-3 rounded border border-gray-600">
                   <div className="flex justify-between items-start">
                     <div>
@@ -2266,7 +2775,6 @@ export default function ScenarioSelector({ scenarios, activeCharacter, showCount
           onClose={() => setIsChatOpen(false)}
         />
       )}
-      
-      </div>
-    );
-  }
+    </div>
+  );
+}

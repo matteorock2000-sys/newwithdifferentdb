@@ -36,7 +36,7 @@ async function generateCompleteCharacter(cClass: string, cRace: string, cBackgro
     const characterText = await parseCharacterText(fullPrompt);
     
     // parseCharacterText is assumed to return the JSON string matching the Character schema.
-    let parsedCharacter: Omit<Character, 'userId' | 'slotIndex'> = JSON.parse(characterText.trim());
+    const parsedCharacter: Omit<Character, 'userId' | 'slotIndex'> = JSON.parse(characterText.trim());
     
     // Ensure id is present
     if (!parsedCharacter.id) {

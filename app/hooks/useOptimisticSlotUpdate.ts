@@ -88,7 +88,7 @@ export function useOptimisticSlotUpdate({
             );
           },
           onRetry: (error, attempt) => {
-            logger.info("Retrying slot update", {
+            logger.info("[SLOT SYNC] Retrying slot update", {
               slotIndex,
               attempt,
               error: error.message,
@@ -96,7 +96,11 @@ export function useOptimisticSlotUpdate({
           },
         }
       ).catch((error) => {
-        logger.error("Slot update failed after retries", { slotIndex, error });
+        logger.error("[SLOT SYNC] Slot update failed after retries", { 
+          slotIndex, 
+          error: error.message,
+          timestamp: new Date().toISOString()
+        });
         showToast("Could not save changes. Please try again.", "error");
       });
     }, debounceDelay)

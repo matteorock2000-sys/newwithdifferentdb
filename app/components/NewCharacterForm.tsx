@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useLocation } from '@remix-run/react';
+import { useLocation , useFetcher } from '@remix-run/react';
 import type { Character, Weapon, SpellSlots, AbilityScores } from '~/types';
 import { RACES, CLASSES, INVENTORY_ITEMS, CANTRIPS, LEVEL_1_SPELLS, LEVEL_2_SPELLS, TRAITS, IDEALS, BONDS, FLAWS, FIGHT_STYLES, ARMOR_TYPES, SKILLS, SAVING_THROWS } from '~/data/dnd';
 import { Input, Select, TextArea, MultiSelect, WeaponInput, SpellSlotInput } from '~/components/CharacterFormHelpers';
 import { rollAllStats } from '~/utils/dice';
 import { STEPS } from '~/components/characterFormConstants';
-import { useFetcher } from '@remix-run/react';
 import ErrorBoundary from './ErrorBoundary';
 import { logger } from '~/utils/logger';
 

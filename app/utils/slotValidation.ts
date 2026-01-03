@@ -30,9 +30,13 @@ export function validateSlotOwnership(
     ? currentUserId === slot.userId 
     : (isLobbyView ? !slot.userId : true);
   
-  const canTakeSlot = !isLobbyView || isOwnSlot || !character || !currentUserId || character.userId === currentUserId;
+  // For AI slots, character ownership doesn't matter - anyone can assign any available character
+  // For Human slots, character must belong to the user (unless it's their own slot)
+  const isAISlot = slot.type === 'AI';
+  const canTakeSlot = !isLobbyView || isOwnSlot || !character || !currentUserId || isAISlot || character.userId === currentUserId;
   
-  if (character && currentUserId && character.userId !== currentUserId && !isOwnSlot) {
+  // Only check character ownership for Human slots (not AI slots)
+  if (character && currentUserId && character.userId !== currentUserId && !isOwnSlot && slot.type === 'Human') {
     return {
       isValid: false,
       errorMessage: "Cannot assign a character that doesn't belong to you",

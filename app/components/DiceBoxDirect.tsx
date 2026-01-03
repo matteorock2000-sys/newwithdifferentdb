@@ -26,6 +26,9 @@ export default function DiceBoxDirect({
   const { showToast } = useGlobalToast();
   const [currentRollResult, setCurrentRollResult] = useState<number | null>(null);
 
+  // Calculate if it's the current player's turn
+  const isCurrentPlayer = diceState && diceState.players[diceState.currentPlayerIndex]?.userId === currentUserId;
+
   // Handle messages from the iframe
   useEffect(() => {
     console.log('[DiceBoxDirect] mounting - iframeRef.current (initial):', iframeRef.current);
@@ -140,10 +143,17 @@ export default function DiceBoxDirect({
 
   // Replace click and keydown handlers to use sendRollCommand
   const handleClick = (e: React.MouseEvent) => {
-    console.log('[DiceBoxDirect] handleClick called with:', { isRolling, isReady, target: e.currentTarget });
+    console.log('[DiceBoxDirect] handleClick called with:', { isRolling, isReady, isCurrentPlayer, target: e.currentTarget });
     
     e.preventDefault();
     e.stopPropagation();
+    
+    // Check if it's the current player's turn
+    if (!isCurrentPlayer) {
+      const currentPlayerName = diceState?.players[diceState.currentPlayerIndex]?.characterName || 'the current player';
+      showToast(`It's not your turn yet. Please wait for ${currentPlayerName} to roll.`, 'info');
+      return;
+    }
     
     // Allow clicking the whole canvas when ready
     if (!isReady) {
@@ -166,6 +176,14 @@ export default function DiceBoxDirect({
     
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
+      
+      // Check if it's the current player's turn
+      if (!isCurrentPlayer) {
+        const currentPlayerName = diceState?.players[diceState.currentPlayerIndex]?.characterName || 'the current player';
+        showToast(`It's not your turn yet. Please wait for ${currentPlayerName} to roll.`, 'info');
+        return;
+      }
+      
       if (!isReady) {
         console.log('[DiceBoxDirect] Key handler: Not ready yet');
         logger.warn('[DiceBoxDirect] Attempted to roll dice before iframe was ready');
@@ -200,7 +218,7 @@ export default function DiceBoxDirect({
               key={player.slotIndex}
               className={`p-4 rounded-lg border-2 transition-all duration-300 ${
                 isCurrentPlayer 
-                  ? 'border-blue-400 bg-blue-900/30 animate-pulse' 
+                  ? 'border-yellow-400 bg-yellow-900/30 animate-pulse' 
                   : hasRolled 
                     ? 'border-green-400 bg-green-900/20' 
                     : 'border-gray-600 bg-gray-900/50'
@@ -223,8 +241,8 @@ export default function DiceBoxDirect({
                   </div>
                 </div>
                 {isCurrentPlayer && (
-                  <div className="text-blue-300 font-semibold">
-                    Your Turn!
+                  <div className="text-yellow-300 font-semibold font-bold text-lg">
+                    🎲 Your Turn!
                   </div>
                 )}
               </div>
@@ -258,14 +276,15 @@ export default function DiceBoxDirect({
           height: '45vh', 
           zIndex: 9998,
           position: 'relative',
-          borderColor: isReady ? '#3b82f6' : '#ef4444', // Blue if ready, red if not
+          borderColor: !isReady ? '#ef4444' : isCurrentPlayer ? '#3b82f6' : '#6b7280', // Red if not ready, blue if current player, gray if not current player
           display: 'block',
           visibility: 'visible',
           background: 'transparent',
           borderRadius: '12px',
-          cursor: isReady ? 'pointer' : 'default'
+          cursor: !isReady ? 'default' : isCurrentPlayer ? 'pointer' : 'not-allowed',
+          opacity: isCurrentPlayer ? 1 : 0.5 // Full opacity for current player, 50% for others
         }}
-        title={isReady ? '3D Dice Box Ready' : '3D Dice Box Loading...'}
+        title={isReady ? (isCurrentPlayer ? 'Your Turn - Click to roll!' : 'Waiting for your turn...') : '3D Dice Box Loading...'}
       >
         <iframe
           ref={iframeRef}
@@ -277,7 +296,7 @@ export default function DiceBoxDirect({
         ></iframe>
 
         {/* Clickable Overlay for Dice Rolling */}
-        {isReady && !isRolling && (
+        {isReady && !isRolling && isCurrentPlayer && (
           <div
             className="absolute inset-0 bg-transparent"
             onClick={handleClick}
@@ -288,6 +307,18 @@ export default function DiceBoxDirect({
             style={{ cursor: 'pointer', zIndex: 10000 }} // Ensure it's above the iframe
             title="Click or press Enter/Space to roll dice"
           />
+        )}
+
+        {/* Waiting for Turn Message */}
+        {isReady && !isCurrentPlayer && (
+          <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center">
+            <div className="text-center text-white animate-pulse">
+              <div className="text-2xl font-bold text-yellow-400 mb-2">
+                Waiting for {diceState?.players[diceState.currentPlayerIndex]?.characterName}'s turn...
+              </div>
+              <div className="text-lg">Please wait your turn to roll the dice</div>
+            </div>
+          </div>
         )}
 
         {!isReady && (

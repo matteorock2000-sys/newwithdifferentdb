@@ -1,6 +1,6 @@
 {
   "C:/Users/Admin/Documents/codespaces/codespaces-blank-1/app/tailwind.css": {
-    "file": "assets/tailwind-DCVPeSS6.css",
+    "file": "assets/tailwind-DFD4JV09.css",
     "src": "C:/Users/Admin/Documents/codespaces/codespaces-blank-1/app/tailwind.css"
   },
   "_NewCharacterForm-BvdIdRuW.js": {
@@ -12,8 +12,8 @@
       "_toast-DUtEy6Tk.js"
     ]
   },
-  "_PlayerSetupSlot-BcPi8J2J.js": {
-    "file": "assets/PlayerSetupSlot-BcPi8J2J.js",
+  "_PlayerSetupSlot-BallGm0B.js": {
+    "file": "assets/PlayerSetupSlot-BallGm0B.js",
     "name": "PlayerSetupSlot",
     "imports": [
       "_components-B-eeP5Ex.js",
@@ -21,8 +21,8 @@
       "_toast-DUtEy6Tk.js"
     ]
   },
-  "_ScenarioSelector-CGhwhXWf.js": {
-    "file": "assets/ScenarioSelector-CGhwhXWf.js",
+  "_ScenarioSelector-BZc3Sia2.js": {
+    "file": "assets/ScenarioSelector-BZc3Sia2.js",
     "name": "ScenarioSelector",
     "imports": [
       "_components-B-eeP5Ex.js",
@@ -71,7 +71,7 @@
     ]
   },
   "app/root.tsx?__remix-build-client-route": {
-    "file": "assets/root-BXdRhRfm.js",
+    "file": "assets/root-5IiLNxRQ.js",
     "name": "root",
     "src": "app/root.tsx?__remix-build-client-route",
     "isEntry": true,
@@ -80,11 +80,11 @@
       "_toast-DUtEy6Tk.js"
     ],
     "assets": [
-      "assets/tailwind-DCVPeSS6.css"
+      "assets/tailwind-DFD4JV09.css"
     ]
   },
   "app/routes/_index.tsx?__remix-build-client-route": {
-    "file": "assets/_index-DmK1PNtt.js",
+    "file": "assets/_index-z5IJdDOu.js",
     "name": "_index",
     "src": "app/routes/_index.tsx?__remix-build-client-route",
     "isEntry": true,
@@ -93,7 +93,7 @@
       "_NewCharacterForm-BvdIdRuW.js",
       "_logger-TrbkkZUU.js",
       "_toast-DUtEy6Tk.js",
-      "_PlayerSetupSlot-BcPi8J2J.js"
+      "_PlayerSetupSlot-BallGm0B.js"
     ]
   },
   "app/routes/api.character.import.tsx?__remix-build-client-route": {
@@ -193,15 +193,15 @@
     ]
   },
   "app/routes/game.tsx?__remix-build-client-route": {
-    "file": "assets/game-BCoVW5Df.js",
+    "file": "assets/game-ZIBnvUC9.js",
     "name": "game",
     "src": "app/routes/game.tsx?__remix-build-client-route",
     "isEntry": true,
     "imports": [
       "_components-B-eeP5Ex.js",
-      "_ScenarioSelector-CGhwhXWf.js",
+      "_ScenarioSelector-BZc3Sia2.js",
       "_NewCharacterForm-BvdIdRuW.js",
-      "_PlayerSetupSlot-BcPi8J2J.js",
+      "_PlayerSetupSlot-BallGm0B.js",
       "_realtime.client-BwVBXxVL.js",
       "_logger-TrbkkZUU.js",
       "_toast-DUtEy6Tk.js",
@@ -252,13 +252,13 @@
     ]
   },
   "app/routes/rooms.tsx?__remix-build-client-route": {
-    "file": "assets/rooms-DeHJdzET.js",
+    "file": "assets/rooms-3tXN1PmM.js",
     "name": "rooms",
     "src": "app/routes/rooms.tsx?__remix-build-client-route",
     "isEntry": true,
     "imports": [
       "_components-B-eeP5Ex.js",
-      "_PlayerSetupSlot-BcPi8J2J.js",
+      "_PlayerSetupSlot-BallGm0B.js",
       "_toast-DUtEy6Tk.js",
       "_logger-TrbkkZUU.js",
       "_realtime.client-BwVBXxVL.js",
@@ -266,14 +266,14 @@
     ]
   },
   "app/routes/world-map.tsx?__remix-build-client-route": {
-    "file": "assets/world-map-COyBxSPC.js",
+    "file": "assets/world-map-CxMdaBcH.js",
     "name": "world-map",
     "src": "app/routes/world-map.tsx?__remix-build-client-route",
     "isEntry": true,
     "imports": [
       "_components-B-eeP5Ex.js",
       "_useConnectionStatus-C9ujrTnG.js",
-      "_ScenarioSelector-CGhwhXWf.js",
+      "_ScenarioSelector-BZc3Sia2.js",
       "_logger-TrbkkZUU.js",
       "_toast-DUtEy6Tk.js",
       "_realtime.client-BwVBXxVL.js",

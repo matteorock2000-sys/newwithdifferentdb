@@ -517,7 +517,7 @@ Please provide the corrected JSON array of exactly 4 scenarios with proper JSON 
         return true;
     });
 
-    let finalScenarios = uniqueScenarios;
+    const finalScenarios = uniqueScenarios;
 
     if (finalScenarios.length !== 4) {
       logger.warn(`AI returned ${finalScenarios.length} unique scenarios instead of 4. Throwing error instead of padding.`);

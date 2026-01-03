@@ -524,6 +524,28 @@ export async function handleRoomAction(formData: FormData, options: HandleRoomAc
         }
     }
     
+    if (intent === "leaveRoom") {
+        if (!roomCode) {
+            return createApiErrorResponse(new Error("Room code is required"), "Missing room code");
+        }
+        
+        try {
+            await leaveRoom(roomCode, userId);
+            logger.debug(`[roomCore.server] User ${userId} left room ${roomCode}`);
+            return json(
+              {
+                success: true,
+                redirectUrl: `/rooms`,
+                message: 'Left room successfully'
+              },
+              { status: 200 }
+            );
+        } catch (err) {
+            logger.error(`[roomCore.server] Error leaving room ${roomCode}`, { err });
+            return createApiErrorResponse(err as Error, `roomCode: ${roomCode}`);
+        }
+    }
+    
     return createApiErrorResponse(new Error("Invalid intent"), "Invalid action intent");
     } catch (error) {
         logger.error(`[roomCore.server] Unhandled error in handleRoomAction`, { error });
@@ -585,7 +607,7 @@ export async function updateParticipantActivity(roomCode: string, userId: string
     
     // Update participant activity
     const now = new Date().toISOString();
-    let updatedParticipants = room.participants?.map(p => 
+    const updatedParticipants = room.participants?.map(p => 
         p.userId === userId ? { ...p, lastActive: now } : p
     ) || [];
     
@@ -663,4 +685,39 @@ export async function updateParticipantActivity(roomCode: string, userId: string
 
     // If no DB update needed, return the calculated room state
     return finalRoom;
+}
+
+/**
+ * Removes a user from a room (non-host exit).
+ */
+export async function leaveRoom(roomCode: string, userId: string): Promise<void> {
+    logger.debug(`[roomCore.server] leaveRoom: ${roomCode} by ${userId}`);
+    
+    const room = await getRoomByCode(roomCode);
+    if (!room) {
+        logger.error(`[roomCore.server] Room not found: ${roomCode}`);
+        throw new Error("Room not found");
+    }
+    
+    // Remove user's slots from setup_slots
+    const updatedSetupSlots = room.setup_slots.map(slot => 
+        slot.userId === userId ? { ...slot, type: 'None' as const, characterId: null, userId: undefined, username: undefined, isReady: false } : slot
+    );
+    
+    // Remove user from participants
+    const updatedParticipants = room.participants.filter(p => p.userId !== userId);
+    
+    logger.debug(`[roomCore.server] User ${userId} removed from room ${roomCode}`);
+    
+    // Update room in database
+    const { error } = await db.from("rooms").update({
+        setup_slots: updatedSetupSlots,
+        participants: updatedParticipants,
+        updated_at: new Date().toISOString()
+    }).eq("code", roomCode);
+    
+    if (error) {
+        logger.error(`[roomCore.server] Error removing user from room:`, { roomCode, userId, error });
+        throw new Error("Failed to leave room");
+    }
 }

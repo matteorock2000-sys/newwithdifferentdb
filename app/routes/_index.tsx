@@ -274,21 +274,24 @@ export default function Index() {
       
       // Only update slot 0 based on selectedCharacterId if it hasn't been manually configured
       // If the user has characters, ensure slot 0 is populated with the first character by default.
-      if (newCharId && newSlots[0].characterId !== newCharId) {
-        newSlots[0] = { type: newType, characterId: newCharId, isReady: false };
+      // Check if slot 0 is already populated by default (no manual interaction)
+      const isSlot0Default = !prevSlots[0].characterId && !prevSlots[0].type && !prevSlots[0].isReady;
+      
+      if (newCharId && (isSlot0Default || newSlots[0].characterId !== newCharId)) {
+        newSlots[0] = { type: newType, characterId: newCharId, isReady: false, userId: user.id, username: user.username };
       } else if (!newCharId && newSlots[0].type !== 'None') {
-        newSlots[0] = { type: 'None', characterId: null, isReady: false };
+        newSlots[0] = { type: 'None', characterId: null, isReady: false, userId: undefined, username: undefined };
       }
       
       return newSlots;
     });
-  }, [selectedCharacterId]);
+  }, [selectedCharacterId, user.id, user.username]);
 
   useEffect(() => {
     if (!selectedCharacterId && characters.length > 0) {
         setSelectedCharacterId(characters[0].id);
     }
-  }, [characters, selectedCharacterId]);
+  }, [characters, selectedCharacterId, user.id, user.username]);
 
 
   const handleSlotChange = (slotIndex: number, newPlayerSlot: PlayerSlot) => {

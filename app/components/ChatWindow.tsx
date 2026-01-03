@@ -77,7 +77,17 @@ export default function ChatWindow({
         fetch(`/api/room/chat?roomCode=${encodeURIComponent(roomCode)}`)
           .then(res => res.json())
           .then(data => {
-            setMessages(data.messages || []);
+            const newMessages = data.messages || [];
+            
+            // Show toast for new messages (not sent by current user)
+            if (newMessages.length > messages.length) {
+              const newestMessage = newMessages[newMessages.length - 1];
+              if (newestMessage && newestMessage.user_id !== currentUserId) {
+                showToast(`${newestMessage.username}: ${newestMessage.message}`, 'info');
+              }
+            }
+            
+            setMessages(newMessages);
           })
           .catch(error => {
             console.error('Error fetching updated chat messages:', error);
@@ -86,7 +96,7 @@ export default function ChatWindow({
     });
 
     return () => unsubscribe();
-  }, [isOpen, roomCode]);
+  }, [isOpen, roomCode, messages.length, currentUserId]);
 
   // Poll for new messages every 3 seconds as fallback
   useEffect(() => {
@@ -101,6 +111,13 @@ export default function ChatWindow({
             const newMessages = data.messages || [];
             // Only update if there are new messages
             if (newMessages.length !== prevMessages.length) {
+              // Show toast for new messages (not sent by current user)
+              if (newMessages.length > prevMessages.length) {
+                const newestMessage = newMessages[newMessages.length - 1];
+                if (newestMessage && newestMessage.user_id !== currentUserId) {
+                  showToast(`${newestMessage.username}: ${newestMessage.message}`, 'info');
+                }
+              }
               return newMessages;
             }
             return prevMessages;
@@ -112,7 +129,7 @@ export default function ChatWindow({
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [isOpen, roomCode]);
+  }, [isOpen, roomCode, currentUserId]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();

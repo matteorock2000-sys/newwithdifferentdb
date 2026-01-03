@@ -39,13 +39,17 @@ export async function getScenarioVotes(roomCode: string): Promise<ScenarioVote[]
       return [];
     }
 
-    // Convert database rows to ScenarioVote objects
+    // Try to enrich votes with characterId from the room's setup_slots when available
+    const room = await getRoomByCode(roomCode);
+
     return data.map(row => ({
+      id: row.id,
       scenarioId: row.scenario_id,
       userId: row.user_id,
       slotIndex: row.slot_index,
       timestamp: row.created_at,
-      voteType: row.vote_type
+      voteType: row.vote_type,
+      characterId: (row as any).character_id || room?.setup_slots?.[row.slot_index]?.characterId || ''
     }));
   } catch (error) {
     console.error('[SCENARIO VOTE SERVICE] Exception fetching votes', { 
@@ -63,9 +67,10 @@ export async function castVote(
   roomCode: string, 
   scenarioId: string, 
   userId: string, 
-  slotIndex: number
+  slotIndex: number,
+  characterId?: string
 ): Promise<{ success: boolean; message: string; userVoteCount: number }> {
-  console.log(`${logPrefix} castVote called with:`, { roomCode, scenarioId, userId, slotIndex });
+  console.log(`${logPrefix} castVote called with:`, { roomCode, scenarioId, userId, slotIndex, characterId });
   
   const room = await getRoomByCode(roomCode);
   if (!room) {
@@ -90,6 +95,13 @@ export async function castVote(
     return { success: false, message: `Slot ${slotIndex} cannot vote.`, userVoteCount: 0 };
   }
   
+  // Use characterId from slot if not provided
+  const voteCharacterId = characterId || targetSlot.characterId || '';
+  if (!voteCharacterId) {
+    console.log(`${logPrefix} Cannot determine character ID for vote`);
+    return { success: false, message: "Character ID is required for voting.", userVoteCount: 0 };
+  }
+  
   // Check if user has available votes
   const userVoteCount = getUserVoteCount(room, userId);
   const allUserVotes = (await getScenarioVotes(roomCode)).filter(vote => 
@@ -98,75 +110,101 @@ export async function castVote(
   
   console.log(`${logPrefix} User vote count: ${userVoteCount}, current votes: ${allUserVotes.length}`);
   
-  // Check if the target slot already has a vote for a different scenario
-  const slotVotes = allUserVotes.filter(vote => vote.slotIndex === slotIndex);
-  const existingSlotVote = slotVotes.find(vote => vote.scenarioId !== scenarioId);
-  
-  // Count active votes (excluding the current slot's vote if changing)
-  const activeVotesCount = existingSlotVote ? 
-    allUserVotes.length - 1 : // Exclude the vote that will be changed
-    allUserVotes.length;       // Count all votes if this is a new vote
-  
-  if (activeVotesCount >= userVoteCount) {
-    console.log(`${logPrefix} User has no available slots for voting`);
-    return {
-      success: false,
-      message: `You have already used all ${userVoteCount} of your voting slots.`,
-      userVoteCount
-    };
-  }
-  
-  // Check if user already voted for this specific scenario with this slot
+  // Check if user already voted for this specific scenario with this character
   const existingVote = allUserVotes.find(vote => 
-    vote.scenarioId === scenarioId && vote.slotIndex === slotIndex
+    vote.scenarioId === scenarioId && vote.characterId === voteCharacterId
   );
   
   console.log(`${logPrefix} Existing vote check:`, existingVote);
   
   if (existingVote) {
-    console.log(`${logPrefix} User already voted for this scenario with this slot`);
+    console.log(`${logPrefix} User already voted for this scenario with this character`);
     return {
       success: false,
-      message: "You have already voted for this scenario with this slot.",
+      message: "You have already voted for this scenario with this character.",
+      userVoteCount
+    };
+  }
+  
+  // Check if character already has a vote for a different scenario
+  const characterVotes = allUserVotes.filter(vote => vote.characterId === voteCharacterId);
+  const existingCharacterVote = characterVotes.find(vote => vote.scenarioId !== scenarioId);
+  
+  // Count active votes (excluding the current character's vote if changing)
+  const activeVotesCount = existingCharacterVote ? 
+    allUserVotes.length - 1 : // Exclude the vote that will be changed
+    allUserVotes.length;       // Count all votes if this is a new vote
+  
+  if (activeVotesCount >= userVoteCount) {
+    console.log(`${logPrefix} User has no available votes`);
+    return {
+      success: false,
+      message: `You have already used all ${userVoteCount} of your votes.`,
       userVoteCount
     };
   }
   
   // Handle REGENERATE votes and regular scenario votes
   if (scenarioId === 'REGENERATE') {
-    // Check if user already voted for REGENERATE with this slot
+    // Check if user already voted for REGENERATE with this character
     const existingRegenerateVote = allUserVotes.find(vote => 
-      vote.scenarioId === 'REGENERATE' && vote.slotIndex === slotIndex && vote.voteType === 'regenerate'
+      vote.scenarioId === 'REGENERATE' && vote.characterId === voteCharacterId
     );
     
     if (existingRegenerateVote) {
-      console.log(`${logPrefix} User already voted for REGENERATE with this slot`);
+      console.log(`${logPrefix} User already voted for REGENERATE with this character`);
       return {
         success: false,
-        message: "You have already voted to regenerate with this slot.",
+        message: "You have already voted to regenerate with this character.",
         userVoteCount
       };
     }
     
-    // Store REGENERATE vote in database
-    const { error } = await db.from('room_scenario_votes').insert([
+    // Create REGENERATE vote in memory (add to scenarios array)
+    const newVote: ScenarioVote = {
+      scenarioId: 'REGENERATE',
+      userId,
+      characterId: voteCharacterId,
+      slotIndex,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Update room scenarios to add this vote
+    const updatedScenarios = room.scenarios?.map(scenario => {
+      if (scenario.id === 'REGENERATE') {
+        const currentUserVotes = scenario.userVotes || [];
+        return {
+          ...scenario,
+          userVotes: [...currentUserVotes, newVote]
+        };
+      }
+      return scenario;
+    });
+
+    if (!updatedScenarios) {
+      return { success: false, message: "No scenarios in room.", userVoteCount };
+    }
+
+    // Persist regenerate vote to DB
+    const { error: insertError } = await db.from('room_scenario_votes').insert([
       {
         room_code: roomCode,
         user_id: userId,
         slot_index: slotIndex,
-        scenario_id: null, // REGENERATE votes don't have a scenario_id
+        scenario_id: null,
         vote_type: 'regenerate'
       }
     ]);
 
-    if (error) {
-      console.error(`${logPrefix} Failed to store REGENERATE vote`, { 
-        roomCode, userId, slotIndex, error: error.message 
-      });
-      return { success: false, message: "Failed to cast vote due to database error.", userVoteCount };
+    if (insertError) {
+      console.error(`${logPrefix} Failed to persist regenerate vote`, { roomCode, userId, slotIndex, error: insertError.message });
+      return { success: false, message: 'Failed to save vote to database.', userVoteCount };
     }
-    
-    console.log(`${logPrefix} REGENERATE vote stored successfully for slot ${slotIndex}`);
+
+    // Save updated room with new vote in scenarios JSON for compatibility
+    await storeRoomScenarios(roomCode, updatedScenarios);
+
+    console.log(`${logPrefix} REGENERATE vote stored successfully for character ${voteCharacterId}`);
     return {
       success: true,
       message: 'Regenerate vote registered!',
@@ -181,24 +219,33 @@ export async function castVote(
     return { success: false, message: "Scenario not found in room.", userVoteCount: userVoteCount };
   }
   
-  // Check if user already voted for this scenario with this slot
-  const existingVoteScenario = allUserVotes.find(vote => 
-    vote.scenarioId === scenarioId && vote.slotIndex === slotIndex && vote.voteType === 'scenario'
-  );
+  // Create new vote with characterId
+  const newVote: ScenarioVote = {
+    scenarioId,
+    userId,
+    characterId: voteCharacterId,
+    slotIndex,
+    timestamp: new Date().toISOString()
+  };
   
-  console.log(`${logPrefix} Existing vote check:`, existingVoteScenario);
-  
-  if (existingVoteScenario) {
-    console.log(`${logPrefix} User already voted for this scenario with this slot`);
-    return {
-      success: false,
-      message: "You have already voted for this scenario with this slot.",
-      userVoteCount
-    };
+  // Update the scenario in the room's scenarios array
+  const updatedScenarios = room.scenarios?.map(scenario => {
+    if (scenario.id === scenarioId) {
+      const currentUserVotes = scenario.userVotes || [];
+      return {
+        ...scenario,
+        userVotes: [...currentUserVotes, newVote]
+      };
+    }
+    return scenario;
+  });
+
+  if (!updatedScenarios) {
+    return { success: false, message: "No scenarios in room.", userVoteCount };
   }
-  
-  // Store vote in database
-  const { error } = await db.from('room_scenario_votes').insert([
+
+  // Persist vote to DB
+  const { error: insertError } = await db.from('room_scenario_votes').insert([
     {
       room_code: roomCode,
       user_id: userId,
@@ -208,14 +255,15 @@ export async function castVote(
     }
   ]);
 
-  if (error) {
-    console.error(`${logPrefix} Failed to store vote`, { 
-      roomCode, scenarioId, userId, slotIndex, error: error.message 
-    });
-    return { success: false, message: "Failed to cast vote due to database error.", userVoteCount };
+  if (insertError) {
+    console.error(`${logPrefix} Failed to persist vote`, { roomCode, scenarioId, userId, slotIndex, error: insertError.message });
+    return { success: false, message: 'Failed to save vote to database.', userVoteCount };
   }
-  
-  console.log(`${logPrefix} Vote cast successfully for room ${roomCode}, scenario ${scenarioId}`);
+
+  // Update the room's scenarios JSON for compatibility with clients that read it
+  await storeRoomScenarios(roomCode, updatedScenarios);
+
+  console.log(`${logPrefix} Vote cast successfully for room ${roomCode}, scenario ${scenarioId}, character ${voteCharacterId}`);
 
   // After storing the vote, check for a strict majority winner and persist it
   try {
@@ -237,6 +285,7 @@ export async function castVote(
   } catch (err) {
     console.error(`${logPrefix} Error while checking for majority after vote`, { roomCode, err });
   }
+  
   return {
     success: true,
     message: "Vote cast successfully!",

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import type { PlayerSlot, DiceRollingState, ScenarioForDisplay } from '~/types';
-import DiceBoxDirect from './DiceBoxDirect';
+import DiceBoxDirect, { type DiceBoxDirectHandle } from './DiceBoxDirect';
  
  interface TiebreakerDiceProps {
    showDiceRoll: boolean;
@@ -54,9 +54,9 @@ const TiebreakerDice: React.FC<TiebreakerDiceProps> = ({
       result: diceRolls[index]
     }));
 
-
   const currentPlayerIndex = diceState?.currentPlayerIndex || 0;
-  const isCurrentPlayer = players[currentPlayerIndex]?.userId === currentUserId;
+  const currentPlayer = players[currentPlayerIndex];
+  const isCurrentPlayer = currentPlayer?.userId === currentUserId;
 
   if (!showDiceRoll) {
     return null;
@@ -130,7 +130,16 @@ const TiebreakerDice: React.FC<TiebreakerDiceProps> = ({
           <h2 className="text-2xl font-semibold text-red-400 mb-4">Player Status</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {players.map((player, index) => (
-              <div key={player.slotIndex} className="bg-gray-700 rounded-lg p-4">
+              <div 
+                key={player.slotIndex} 
+                className={`bg-gray-700 rounded-lg p-4 transition-all duration-300 ${
+                  index === currentPlayerIndex && !player.hasRolled 
+                    ? 'border-2 border-yellow-400 shadow-lg shadow-yellow-600/50 animate-pulse' 
+                    : player.hasRolled
+                    ? 'border-2 border-green-500 bg-gray-600'
+                    : 'border-2 border-gray-600'
+                }`}
+              >
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-semibold text-gray-200">{player.characterName}</h3>
@@ -138,10 +147,17 @@ const TiebreakerDice: React.FC<TiebreakerDiceProps> = ({
                       {player.userId === currentUserId ? 'You' : 'Other Player'}
                     </p>
                   </div>
-                  <div className={`px-3 py-1 rounded text-sm font-semibold ${
-                    player.hasRolled ? 'bg-green-900 text-green-300' : 'bg-gray-600 text-gray-400'
-                  }`}>
-                    {player.hasRolled ? 'Rolled' : 'Waiting'}
+                  <div className="flex flex-col items-end space-y-1">
+                    <div className={`px-3 py-1 rounded text-sm font-semibold ${
+                      player.hasRolled ? 'bg-green-900 text-green-300' : 'bg-gray-600 text-gray-400'
+                    }`}>
+                      {player.hasRolled ? 'Rolled' : 'Waiting'}
+                    </div>
+                    {index === currentPlayerIndex && !player.hasRolled && (
+                      <div className="px-2 py-1 bg-yellow-600 text-yellow-100 text-xs font-bold rounded-full animate-pulse">
+                        NOW ROLLING!
+                      </div>
+                    )}
                   </div>
                 </div>
                 {player.hasRolled && (
@@ -151,14 +167,65 @@ const TiebreakerDice: React.FC<TiebreakerDiceProps> = ({
                   </div>
                 )}
                 {index === currentPlayerIndex && !player.hasRolled && (
-                  <div className="mt-2 text-yellow-400 font-semibold">
-                    Your turn to roll!
+                  <div className="mt-2 text-yellow-400 font-semibold animate-bounce">
+                    🎲 Your turn to roll!
                   </div>
                 )}
               </div>
             ))}
           </div>
         </div>
+
+        {/* Winner Information */}
+        {/* Current Turn Indicator */}
+        {!diceRollComplete && diceState && (
+          <div className="bg-yellow-900 border border-yellow-600 rounded-lg p-4 mb-6">
+            <h2 className="text-2xl font-semibold text-yellow-300 mb-2">🎯 Current Turn</h2>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-yellow-200">
+                  <strong>{currentPlayer?.characterName || 'Unknown Player'}</strong> is rolling
+                </p>
+                <p className="text-yellow-400 text-sm">
+                  {currentPlayer?.userId === currentUserId ? 'That\'s you!' : 'Waiting for their roll...'}
+                </p>
+              </div>
+              <div className="text-4xl animate-spin">🎲</div>
+            </div>
+            <div className="mt-2 text-yellow-400">
+              Progress: {rolledCount}/{totalActiveSlots} players have rolled
+            </div>
+          </div>
+        )}
+
+        {/* Phase 2: Enhanced Current Turn Indicator */}
+        {!diceRollComplete && diceState && (
+          <div className="bg-gradient-to-r from-yellow-900 via-yellow-800 to-yellow-900 border-2 border-yellow-500 rounded-lg p-4 mb-6 shadow-lg shadow-yellow-600/50">
+            <h2 className="text-2xl font-semibold text-yellow-300 mb-2">🎯 CURRENT TURN</h2>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-yellow-200 text-lg font-bold">
+                  {currentPlayer?.characterName || 'Unknown Player'}
+                </p>
+                <p className="text-yellow-300 text-sm font-semibold">
+                  {currentPlayer?.userId === currentUserId ? 'IT\'S YOUR TURN!' : 'IS ROLLING...'}
+                </p>
+                {currentPlayer?.userId === currentUserId && (
+                  <p className="text-yellow-200 text-sm mt-1 animate-bounce">
+                    🎲 Your turn to roll! Roll now!
+                  </p>
+                )}
+              </div>
+              <div className="text-6xl animate-spin">🎲</div>
+            </div>
+            <div className="mt-3 text-yellow-300 font-semibold">
+              Progress: {rolledCount}/{totalActiveSlots} rolled
+            </div>
+            <div className="mt-2 text-yellow-400 text-sm">
+              {currentPlayer?.userId === currentUserId ? 'You have priority!' : 'Please wait your turn...'}
+            </div>
+          </div>
+        )}
 
         {/* Winner Information */}
         {diceRollComplete && winningScenarioFromDice && (
@@ -183,34 +250,6 @@ const TiebreakerDice: React.FC<TiebreakerDiceProps> = ({
         )}
 
         {/* Roll Results */}
-        {Object.keys(diceRolls).length > 0 && (
-          <div className="bg-gray-800 rounded-lg p-4 mb-6">
-            <h2 className="text-2xl font-semibold text-red-400 mb-4">Roll Results</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Object.entries(diceRolls).map(([slotIndex, result]) => {
-                const slot = partySlots[parseInt(slotIndex)];
-                return (
-                  <div key={slotIndex} className="bg-gray-700 rounded-lg p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="font-semibold text-gray-200">
-                          {slot?.characterName || `Player ${slotIndex}`}
-                        </h3>
-                        <p className="text-gray-400 text-sm">
-                          {slot?.userId === currentUserId ? 'You' : 'Other Player'}
-                        </p>
-                      </div>
-                      <div className="text-yellow-400 font-bold text-2xl">
-                        {result}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {/* Instructions */}
         {!diceRollComplete && (
           <div className="bg-blue-900 border border-blue-600 rounded-lg p-4">

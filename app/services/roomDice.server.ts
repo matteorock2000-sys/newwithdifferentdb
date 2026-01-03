@@ -37,11 +37,11 @@ export async function startDiceRolling(roomCode: string): Promise<boolean> {
         }
         
         // Extract active players from setup_slots
-        const activePlayers = room.setup_slots
+        let activePlayers = room.setup_slots
             .map((slot, index) => {
                 if (slot && (slot.type === 'Human' || slot.type === 'AI')) {
                     return {
-                        userId: slot.userId || 'unknown',
+                        userId: slot.userId || (slot.type === 'AI' ? room.host_id : 'unknown'),
                         slotIndex: index,
                         characterId: slot.characterId || 'unknown',
                         characterName: slot.characterName || `Player ${index + 1}`
@@ -55,16 +55,80 @@ export async function startDiceRolling(roomCode: string): Promise<boolean> {
                 characterId: string;
                 characterName: string;
             }>;
+
+        // Resolve character names from character data to ensure accuracy
+        if (activePlayers.length > 0) {
+            const characterIds = activePlayers.map(p => p.characterId).filter(id => id !== 'unknown');
+            if (characterIds.length > 0) {
+                // Fetch all characters mentioned in the room slots
+                const { data: charactersData, error: charsError } = await db
+                    .from('characters')
+                    .select('id, name, userId')
+                    .in('id', characterIds);
+
+                if (charsError) {
+                    logger.warn(`[roomDice.server] Error fetching characters for dice rolling:`, { roomCode, error: charsError.message });
+                } else if (charactersData) {
+                    // Create a map of characterId to character name
+                    const characterMap = new Map(charactersData.map(c => [c.id, c.name]));
+                    
+                    // Update activePlayers with correct character names
+                    activePlayers = activePlayers.map(player => {
+                        const characterName = characterMap.get(player.characterId) || 
+                                            player.characterName || 
+                                            `Player ${player.slotIndex + 1}`;
+                        
+                        return {
+                            ...player,
+                            characterName
+                        };
+                    });
+                    
+                    logger.debug(`[roomDice.server] Updated character names for dice rolling:`, {
+                        roomCode,
+                        players: activePlayers.map(p => ({ slotIndex: p.slotIndex, characterName: p.characterName }))
+                    });
+                }
+            }
+        }
         
         if (activePlayers.length === 0) {
             logger.warn(`[roomDice.server] No active players found for dice rolling in room ${roomCode}`);
             return false;
         }
         
+        // Ensure the host rolls first in the turn order
+        // This maintains consistency with the tiebreaker logic where the host wins ties
+        // and provides a clear, predictable turn sequence for all players
+        
+        // Store original order for logging
+        const originalPlayers = [...activePlayers];
+        
+        // Find the host's slot index in the active players array
+        const hostPlayerIndex = activePlayers.findIndex(p => p.userId === room.host_id);
+        
+        if (hostPlayerIndex === -1) {
+            // Host is not in active players - this is an unexpected state
+            logger.warn(`[roomDice.server] Host ${room.host_id} not found in active players for room ${roomCode}. Original order: ${originalPlayers.map(p => `${p.characterName}(${p.slotIndex})`).join(', ')}`);
+            // Prevent dice rolling without the host
+            logger.debug(`[roomDice.server] Cannot start dice rolling without host in active players for room ${roomCode}`);
+            return false;
+        } else {
+            // Host found - reorder the array to place host at index 0
+            const hostPlayer = activePlayers[hostPlayerIndex];
+            const otherPlayers = activePlayers.filter((_, idx) => idx !== hostPlayerIndex);
+            activePlayers = [hostPlayer, ...otherPlayers];
+            
+            logger.debug(`[roomDice.server] Reordered active players for room ${roomCode}:`);
+            logger.debug(`[roomDice.server] Original: ${originalPlayers.map(p => `${p.characterName}(${p.slotIndex})`).join(', ')}`);
+            logger.debug(`[roomDice.server] Reordered: ${activePlayers.map(p => `${p.characterName}(${p.slotIndex})`).join(', ')}`);
+            logger.debug(`[roomDice.server] Host ${room.host_id} moved to index 0 from index ${hostPlayerIndex}`);
+        }
+        
         // Initialize dice rolling state
         const initialDiceState: DiceRollingState = {
             status: 'rolling',
-            currentPlayerIndex: 0,
+            currentPlayerIndex: 0, // Always points to host after reordering
             players: activePlayers,
             rolls: {},
             winner: null
@@ -136,6 +200,19 @@ export async function recordDiceRoll(
                 diceRollingState.rolls[player.slotIndex] !== undefined
             );
             
+            // Update current player index to next player who hasn't rolled yet
+            if (!allPlayersRolled) {
+                let nextPlayerIndex = diceRollingState.currentPlayerIndex;
+                do {
+                    nextPlayerIndex = (nextPlayerIndex + 1) % diceRollingState.players.length;
+                } while (
+                    nextPlayerIndex !== diceRollingState.currentPlayerIndex &&
+                    diceRollingState.rolls[diceRollingState.players[nextPlayerIndex].slotIndex] !== undefined
+                );
+                
+                diceRollingState.currentPlayerIndex = nextPlayerIndex;
+            }
+            
             if (allPlayersRolled) {
                 // Determine winner
                 let maxRoll = -1;
@@ -157,35 +234,33 @@ export async function recordDiceRoll(
                 logger.debug(`[roomDice.server] Max roll: ${maxRoll}, potential winners: ${potentialWinners.length}`);
                 
                 let winnerIndex = -1;
+                let winnerCharacterId = '';
+                
                 if (potentialWinners.length === 1) {
                     winnerIndex = potentialWinners[0].slotIndex;
-                    logger.debug(`[roomDice.server] Single winner: ${winnerIndex}`);
+                    const winnerPlayer = diceRollingState.players.find(p => p.slotIndex === winnerIndex);
+                    winnerCharacterId = winnerPlayer?.characterId || '';
+                    logger.debug(`[roomDice.server] Single winner: ${winnerIndex} (character: ${winnerCharacterId})`);
                 } else if (potentialWinners.length > 1) {
                     const hostWinner = potentialWinners.find(p => p.userId === hostId);
                     if (hostWinner) {
                         winnerIndex = hostWinner.slotIndex;
-                        logger.debug(`[roomDice.server] Host winner in tie: ${winnerIndex}`);
+                        const winnerPlayer = diceRollingState.players.find(p => p.slotIndex === winnerIndex);
+                        winnerCharacterId = winnerPlayer?.characterId || '';
+                        logger.debug(`[roomDice.server] Host winner in tie: ${winnerIndex} (character: ${winnerCharacterId})`);
                     } else {
                         // If host is not in the tie, default to the first person who rolled that score
                         winnerIndex = potentialWinners[0].slotIndex;
-                        logger.debug(`[roomDice.server] First winner in tie: ${winnerIndex}`);
+                        const winnerPlayer = diceRollingState.players.find(p => p.slotIndex === winnerIndex);
+                        winnerCharacterId = winnerPlayer?.characterId || '';
+                        logger.debug(`[roomDice.server] First winner in tie: ${winnerIndex} (character: ${winnerCharacterId})`);
                     }
                 }
                 
                 diceRollingState.winner = winnerIndex;
+                diceRollingState.winnerCharacterId = winnerCharacterId;
                 diceRollingState.status = 'completed';
-                logger.debug(`[roomDice.server] Dice rolling completed, winner: ${winnerIndex}, status: ${diceRollingState.status}`);
-            } else {
-                // Move to next player
-                let nextPlayerIndex = diceRollingState.currentPlayerIndex;
-                do {
-                    nextPlayerIndex = (nextPlayerIndex + 1) % diceRollingState.players.length;
-                } while (
-                    nextPlayerIndex !== diceRollingState.currentPlayerIndex &&
-                    diceRollingState.rolls[diceRollingState.players[nextPlayerIndex].slotIndex] !== undefined
-                );
-                
-                diceRollingState.currentPlayerIndex = nextPlayerIndex;
+                logger.debug(`[roomDice.server] Dice rolling completed, winner: ${winnerIndex} (character: ${winnerCharacterId}), status: ${diceRollingState.status}`);
             }
             
             // Update room record with new state
@@ -215,9 +290,12 @@ export async function recordDiceRoll(
  * @returns A promise that resolves with the DiceRollingState, or null if not active.
  */
 export async function getDiceRollingState(roomCode: string): Promise<DiceRollingState | null> {
-    // Reduce verbosity - only log when needed
+    logger.debug(`[roomDice.server] getDiceRollingState called for room: ${roomCode}`);
+    
     try {
         const { data, error } = await db.from('rooms').select('dice_rolling_state').eq('code', roomCode).single();
+        
+        logger.debug(`[roomDice.server] getDiceRollingState query result:`, { data, error });
         
         if (error || !data) {
             logger.error(`[roomDice.server] Error fetching dice rolling state:`, { roomCode, error });

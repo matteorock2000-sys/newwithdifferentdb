@@ -154,7 +154,8 @@ export type PlayerSlotType = 'Human' | 'AI' | 'None';
 export interface ScenarioVote {
   scenarioId: string;
   userId: string;
-  slotIndex: number; // Which slot this vote represents
+  characterId: string; // The character voting for this scenario (primary identifier)
+  slotIndex: number; // Which slot this vote came from (for reference)
   timestamp: string;
 }
 
@@ -233,7 +234,8 @@ export interface DiceRollingState {
     characterName: string;
   }>;
   rolls: Record<number, number>; // slotIndex -> diceResult
-  winner: number | null; // slotIndex of winner
+  winner: number | null; // slotIndex of winner (for backward compatibility)
+  winnerCharacterId?: string; // Character ID of the winner (for accurate vote lookup)
 }
 
 // --- New Types for Realtime Room Updates ---

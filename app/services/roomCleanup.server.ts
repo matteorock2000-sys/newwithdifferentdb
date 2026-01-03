@@ -77,17 +77,51 @@ export async function calculateInactivityCleanup(room: DBRoom, activeUserId?: st
     logger.debug(`[SLOT CLEANUP] Room ${room.code}: Checking for orphaned slots. Current participants: ${JSON.stringify(newParticipants.map(p => ({ userId: p.userId, characterId: p.characterId })))}`);
     logger.debug(`[SLOT CLEANUP] Room ${room.code}: Current slots before orphaned check: ${JSON.stringify(updatedSetupSlots.map(s => ({ type: s.type, characterId: s.characterId?.substring(0, 8) })))}`);
     
-    // Only reset slots if there's a real mismatch (slots have characters not in participants)
+    // ROBUST CHARACTER PERSISTENCE LOGIC:
+    // Only reset slots under very specific conditions to ensure character persistence
     let hasOrphanedSlots = false;
     updatedSetupSlots.forEach((slot, index) => {
       if (slot.characterId && !currentCharacterIds.has(slot.characterId)) {
+        // CRITICAL CHECK 1: Is the room completely empty?
+        const roomIsEmpty = newParticipants.length === 0;
+        
+        // CRITICAL CHECK 2: Is the host active?
         const hostIsActive = newParticipants.some(p => p.userId === room.host_id);
 
-        // Do not reset AI slots if the host is active.
-        if (slot.type === 'AI' && hostIsActive) {
-          // it's an AI slot and the host is here, so we don't touch it.
-        } else {
-          // Additional check: only reset if the slot is not already 'None'
+        // CRITICAL CHECK 3: Does the character belong to any current participant?
+        // Enhanced check: Look for the character ID in the current participants list
+        const characterBelongsToCurrentUser = newParticipants.some(p => p.characterId === slot.characterId);
+        
+        // CRITICAL CHECK 4: Is this a legitimate orphaned character?
+        // Only consider truly abandoned characters for cleanup
+        const isLegitimatelyOrphaned = !characterBelongsToCurrentUser && 
+                                     roomIsEmpty === false && 
+                                     hostIsActive === false;
+
+        // DECISION LOGIC:
+        // 1. If room is empty -> reset all slots (legitimate cleanup)
+        if (roomIsEmpty) {
+          if (slot.type !== 'None') {
+            logger.debug(`[SLOT CLEANUP] Room ${room.code}: Resetting slot ${index} (Char ID: ${slot.characterId.substring(0, 8)}) from ${slot.type} to None because room is empty.`);
+            updatedSetupSlots[index] = {
+              type: 'None',
+              characterId: null,
+              isReady: false,
+            };
+            hasOrphanedSlots = true;
+            needsDBUpdate = true;
+          }
+        }
+        // 2. If host is active -> preserve AI slots (host control)
+        else if (slot.type === 'AI' && hostIsActive) {
+          logger.debug(`[SLOT CLEANUP] Room ${room.code}: Preserving AI slot ${index} (Char ID: ${slot.characterId.substring(0, 8)}) because host is active.`);
+        }
+        // 3. If character belongs to current user -> preserve slot (user ownership)
+        else if (characterBelongsToCurrentUser) {
+          logger.debug(`[SLOT CLEANUP] Room ${room.code}: Preserving slot ${index} (Char ID: ${slot.characterId.substring(0, 8)}) because character belongs to current user.`);
+        }
+        // 4. If character is legitimately orphaned -> reset slot (genuine cleanup)
+        else if (isLegitimatelyOrphaned) {
           if (slot.type !== 'None') {
             logger.debug(`[SLOT CLEANUP] Room ${room.code}: Resetting orphaned slot ${index} (Char ID: ${slot.characterId.substring(0, 8)}) from ${slot.type} to None.`);
             updatedSetupSlots[index] = {
@@ -98,6 +132,10 @@ export async function calculateInactivityCleanup(room: DBRoom, activeUserId?: st
             hasOrphanedSlots = true;
             needsDBUpdate = true;
           }
+        }
+        // 5. Default: Preserve slot (conservative approach)
+        else {
+          logger.debug(`[SLOT CLEANUP] Room ${room.code}: Preserving slot ${index} (Char ID: ${slot.characterId.substring(0, 8)}) due to conservative cleanup policy.`);
         }
       }
     });

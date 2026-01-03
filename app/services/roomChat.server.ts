@@ -28,7 +28,7 @@ export async function getRoomChatMessages(roomCode: string, limit: number): Prom
             username,
             message,
             created_at
-        `).eq("room_code", roomCode).order("created_at", { ascending: false }).limit(limit);
+        `).eq("code", roomCode).order("created_at", { ascending: false }).limit(limit);
         
         if (error) {
             logger.error(`[roomChat.server] Error fetching chat messages:`, { roomCode, error });
@@ -55,7 +55,7 @@ export async function insertChatMessage(roomCode: string, userId: string, userna
     
     try {
         const { error } = await db.from("room_chat").insert({
-            room_code: roomCode,
+            code: roomCode,
             user_id: userId,
             username: username,
             message: message,

@@ -2,13 +2,13 @@ import { json, redirect, LoaderFunction, ActionFunction } from "@remix-run/node"
 import { useLoaderData, useFetcher, Form, Link, useNavigate } from "@remix-run/react";
 import { useState, useEffect, useMemo } from "react";
 import { requireUser } from "~/services/auth.server";
-import { getCharactersForUser, getTemporaryPartySetup, getAndClearTemporaryPartySetup, clearTemporaryPartySetup, db } from "~/services/db.server";
+import { getCharactersForUser, getTemporaryPartySetup, getAndClearTemporaryPartySetup, clearTemporaryPartySetup, db, getCharactersByIds } from "~/services/db.server";
 import { getSession, commitSession, cleanupSession } from "~/sessions";
 import type { Character, User, PlayerSlot, Room } from "~/types";
 import PlayerSetupSlot from "~/components/PlayerSetupSlot";
 import { handleRoomAction, getAllActiveRooms } from "~/services/roomCore.server";
-import { useGlobalToast } from "~/utils/toast";
-import { showToast } from "~/utils/toast";
+import { useGlobalToast , showToast } from "~/utils/toast";
+
 import { logger } from "~/utils/logger";
 import { debounce } from "~/utils/debounce";
 import { subscribeToRoomChanges } from "~/services/realtime.client";
@@ -32,16 +32,37 @@ const DEFAULT_SLOTS: PlayerSlot[] = [
 export const loader: LoaderFunction = async ({ request }) => {
   const user = await requireUser(request);
   const session = await getSession(request.headers.get("Cookie"));
-  const characters = await getCharactersForUser(user.id);
+  const userCharacters = await getCharactersForUser(user.id);
   const allRooms = await getAllActiveRooms();
   // Only show rooms that are in the lobby state for room selection
   const activeRooms = allRooms.filter(r => r.status === 'lobby');
   
   // Create a map for quick character name lookup
-  const characterMap = characters.reduce((acc, char) => {
+  const characterMap = userCharacters.reduce((acc, char) => {
     if (char) acc[char.id] = char.name;
     return acc;
   }, {} as Record<string, string>);
+  
+  // --- START: Fetch characters from all active rooms ---
+  // Collect all character IDs from all active room setup_slots
+  const allCharacterIds = new Set<string>();
+  activeRooms.forEach(room => {
+    room.setup_slots.forEach(slot => {
+      if (slot.characterId) {
+        allCharacterIds.add(slot.characterId);
+      }
+    });
+  });
+
+  // Fetch all characters mentioned in room slots (for display in other players' slots)
+  let roomCharacters: Character[] = [];
+  if (allCharacterIds.size > 0) {
+    roomCharacters = await getCharactersByIds(Array.from(allCharacterIds));
+  }
+
+  // Combine user's own characters with other room characters
+  const characters = [...userCharacters, ...roomCharacters.filter(c => !userCharacters.some(uc => uc?.id === c.id))].filter((c): c is Character => c !== null);
+  // --- END: Fetch characters from all active rooms ---
   
   // --- START: Database-based Party Setup Retrieval ---
   let initialPartySlots: PlayerSlot[] = DEFAULT_SLOTS;
@@ -205,8 +226,8 @@ const { user, characters, initialPartySlots }  = loaderData;
       if (fetcher.data && typeof fetcher.data === 'object' && 'success' in fetcher.data) {
         const response = fetcher.data as any;
         if (response.success && response.redirectUrl) {
-          // Navigate to the game page
-          window.location.href = response.redirectUrl;
+          // Navigate to the game page using Remix navigation instead of window.location
+          navigate(response.redirectUrl);
           return;
         }
       }
@@ -281,7 +302,7 @@ const { user, characters, initialPartySlots }  = loaderData;
     return () => {
       unsubscribers.forEach(unsub => unsub());
     };
-  }, [activeRooms.map(r => r.code).join(',')]);
+  }, [JSON.stringify(activeRooms.map(r => r.code))]);
 
   // Update state when fetcher data arrives
   useEffect(() => {
@@ -475,7 +496,7 @@ const { user, characters, initialPartySlots }  = loaderData;
               {/* Party Slots - Updated layout for better character card display */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch mb-6">
                 {partySlots.map((slot, index) => (
-                  <div key={index} className="bg-gray-700/60 rounded-xl p-4 border border-gray-600 hover:border-gray-500 transition-all duration-200">
+                  <div key={`slot-${index}-${slot.characterId || 'empty'}`} className="bg-gray-700/60 rounded-xl p-4 border border-gray-600 hover:border-gray-500 transition-all duration-200">
                     <PlayerSetupSlot
                 slotIndex={index}
                 playerSlot={slot}

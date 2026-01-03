@@ -9,7 +9,7 @@
  * ARIA Support: Greta Krafsig
  * Project: https://github.com/CodeSeven/toastr
  */
-; (function (define) {
+ (function (define) {
     define(['jquery'], function ($) {
         return (function () {
             var $container;
@@ -121,7 +121,7 @@
                 var toastsToClear = $container.children();
                 for (var i = toastsToClear.length - 1; i >= 0; i--) {
                     clearToast($(toastsToClear[i]), options);
-                };
+                }
             }
 
             function clearToast($toastElement, options){

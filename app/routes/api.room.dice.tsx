@@ -18,11 +18,17 @@ import { retryOperation } from '~/utils/retry';
  * Handle dice roll actions for tiebreakers and other game mechanics
  */
 export async function action({ request }: ActionFunctionArgs) {
+  logger.debug(`[DICE API] Dice API action called with method: ${request.method}`);
+  
   try {
     const user = await requireUser(request);
+    logger.debug(`[DICE API] User authenticated: ${user.id}`);
+    
     const formData = await request.formData();
     const intent = formData.get("intent")?.toString();
     const roomCode = formData.get("roomCode")?.toString();
+    
+    logger.debug(`[DICE API] Intent: ${intent}, RoomCode: ${roomCode}`);
     
     // Validate required fields
     if (!roomCode) {
@@ -80,7 +86,9 @@ export async function action({ request }: ActionFunctionArgs) {
       }
 
       case "getDiceRollingState": {
+        logger.debug(`[DICE API] Processing getDiceRollingState intent`);
         try {
+          logger.debug(`[DICE API] getDiceRollingState called for room: ${roomCode}`);
           const diceRollingState = await retryOperation(
             () => getDiceRollingState(roomCode),
             {
@@ -88,6 +96,7 @@ export async function action({ request }: ActionFunctionArgs) {
               delayMs: 500,
               shouldRetry: (error) => {
                 const errorType = detectErrorType(error);
+                logger.debug(`[DICE API] Retry check for getDiceRollingState: ${errorType}`);
                 return (
                   errorType === "NETWORK_TIMEOUT" ||
                   errorType === "DATABASE_ERROR"
@@ -96,6 +105,7 @@ export async function action({ request }: ActionFunctionArgs) {
             }
           );
 
+          logger.debug(`[DICE API] getDiceRollingState result:`, { success: !!diceRollingState, hasState: !!diceRollingState });
           return json({ success: !!diceRollingState, diceRollingState });
         } catch (error) {
           logger.error("[DICE API] Error fetching dice rolling state", {

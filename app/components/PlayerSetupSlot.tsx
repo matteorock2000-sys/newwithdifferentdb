@@ -203,26 +203,29 @@ export default function PlayerSetupSlot({
     // Fallback logic for isOwnSlot when currentUserId is undefined (for backward compatibility)
     // const effectiveIsOwnSlot = currentUserId ? isOwnSlot : (playerSlot.userId ? playerSlot.userId === currentUserId : !playerSlot.userId);
 
-    // Determine if slot is locked (lobby view + not own slot)
-    const isSlotLocked = isLobbyView && playerSlot.userId && playerSlot.userId !== currentUserId;
+    // Determine if slot is locked (lobby view + not own slot + has active type)
+    const isSlotLocked = isLobbyView && playerSlot.userId && playerSlot.userId !== currentUserId && playerSlot.type !== 'None';
+    
+    // For portrait panel visibility: Always allow expansion for all slots, regardless of ownership
+    // The panel shows character details for all players, not just own characters
 
     // Callbacks that depend on isSlotLocked (and other states/props defined above)
     const handleMouseEnter = useCallback(() => {
-        if (isSlotLocked) return;
+        // Allow expansion for locked slots too - just can't edit them
         setIsExpanded(true);
         debouncedSetIsExpandedFalse.cancel(); // Cancel any pending mouse leave debounces
-    }, [isSlotLocked, debouncedSetIsExpandedFalse]);
+    }, [debouncedSetIsExpandedFalse]);
 
     const handleMouseLeave = useCallback(() => {
-        if (isSlotLocked) return;
+        // Allow collapse for all slots
         debouncedSetIsExpandedFalse(); // Trigger debounced collapse
-    }, [isSlotLocked, debouncedSetIsExpandedFalse]);
+    }, [debouncedSetIsExpandedFalse]);
 
     const handleCardClick = useCallback(() => {
-        if (isSlotLocked) return;
+        // Allow toggling expansion for all slots, even if locked (for viewing)
         setIsExpanded(prev => !prev);
         debouncedSetIsExpandedFalse.cancel(); // Cancel any pending mouse leave debounces
-    }, [isSlotLocked, debouncedSetIsExpandedFalse]);
+    }, [debouncedSetIsExpandedFalse]);
     
     // Use user's own characters if available and it's their slot, otherwise use allCharacters (for display only)
     const charactersForSelection = isOwnSlot && userOwnCharacters ? userOwnCharacters : allCharacters;
@@ -257,6 +260,16 @@ export default function PlayerSetupSlot({
                 return !isOccupied && isOwnedByCurrentUser;
             }
             
+            // For AI slots, allow any available character (ownership doesn't matter)
+            if (type === 'AI') {
+                return !isOccupied;
+            }
+            
+            // For Human slots that aren't own slots, only show unoccupied characters owned by current user
+            if (type === 'Human' && currentUserId) {
+                return !isOccupied && isOwnedByCurrentUser;
+            }
+            
             // For other players' slots, allow viewing but not selecting occupied characters
             return !isOccupied;
         });
@@ -267,16 +280,17 @@ export default function PlayerSetupSlot({
             occupiedIds: Array.from(occupiedIds),
             filteredCount: filtered.length,
             isOwnSlot,
-            currentUserId
+            currentUserId,
+            slotType: type
         });
         
         return filtered;
-    }, [charactersForSelection, allSlots, slotIndex, currentUserId, isOwnSlot]);
+    }, [charactersForSelection, allSlots, slotIndex, currentUserId, isOwnSlot, type]);
 
 
 
     const handleTypeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-        if (isSlotLocked) return;
+        if (isSlotLocked && type !== 'None') return;
         
         const newType = e.target.value as PlayerSlot['type'];
         
@@ -296,12 +310,7 @@ export default function PlayerSetupSlot({
             return;
         }
         
-        // Check if user has reached their slot limit
-        if (newType !== 'None' && userHasMaxSlots && !isOwnSlot) {
-            logger.warn('User has reached slot limit', { slotIndex, userSlotCount });
-            showToast('Cannot take more slots: You can only control up to 2 slots per room.', 'error');
-            return;
-        }
+        // Removed user slot limit check - users can now take as many slots as they want
         
         // Check if slot is already occupied by another user's character
         if (newType !== 'None' && playerSlot.characterId && playerSlot.userId && playerSlot.userId !== currentUserId) {
@@ -316,12 +325,7 @@ export default function PlayerSetupSlot({
         let newUsername: string | undefined = playerSlot.username ?? undefined;
 
         if (newType === 'Human' || newType === 'AI') {
-            // Check if user already has 2 slots and is trying to take another
-            if (userSlotCount >= 2 && !isOwnSlot) {
-                logger.warn('User cannot take more slots', { slotIndex, userSlotCount });
-                showToast('You can only control up to 2 slots per room.', 'error');
-                return;
-            }
+            // Removed user slot count check - users can take as many slots as they want
             
             // 1. Try to keep the existing character if it's still valid/available
             const currentCharacterStillAvailable = charactersForSelection.some(c => c.id === characterId) && 
@@ -331,9 +335,17 @@ export default function PlayerSetupSlot({
                 newCharacterId = characterId;
                 logger.debug('Keeping existing character', { slotIndex, characterId });
             } else {
-                // 2. Assign the first available character
-                newCharacterId = availableCharacters.length > 0 ? availableCharacters[0].id : null;
-                logger.debug('Assigning new character', { slotIndex, newCharacterId });
+                // 2. For AI slots, assign the first available character (ownership doesn't matter)
+                // For Human slots, assign the first available character that belongs to the user
+                if (newType === 'AI') {
+                    newCharacterId = availableCharacters.length > 0 ? availableCharacters[0].id : null;
+                    logger.debug('Assigning new character for AI slot', { slotIndex, newCharacterId });
+                } else {
+                    // For Human slots, filter to characters owned by current user
+                    const userCharacters = availableCharacters.filter(c => c.userId === currentUserId);
+                    newCharacterId = userCharacters.length > 0 ? userCharacters[0].id : null;
+                    logger.debug('Assigning new character for Human slot', { slotIndex, newCharacterId, userCharactersCount: userCharacters.length });
+                }
             }
             newIsReady = true;
             
@@ -489,10 +501,18 @@ export default function PlayerSetupSlot({
         isOwnSlot,
         isSlotLocked,
         playerSlotCharacterId: playerSlot.characterId,
+        playerSlotCharacterName: playerSlot.characterName,
         selectedCharacter: selectedCharacter ? { id: selectedCharacter.id, name: selectedCharacter.name, avatarUrl: selectedCharacter.avatarUrl } : null,
+        allCharacters: allCharacters.map(c => ({ id: c.id, name: c.name })),
         availableCharactersCount: availableCharacters.length,
         selectDisabled: isSlotLocked,
     });
+
+    // For locked slots, get character info from allCharacters or fallback to slot data
+    const lockedSlotCharacter = useMemo(() => {
+        if (!isSlotLocked || !playerSlot.characterId) return null;
+        return allCharacters.find(c => c.id === playerSlot.characterId);
+    }, [isSlotLocked, playerSlot.characterId, allCharacters]);
     return (
         <div className={`w-full min-w-0 p-4 rounded-lg shadow-lg transition duration-300 relative
             ${isReady ? 'bg-green-900 border-2 border-green-500' : 'bg-gray-700 border-2 border-gray-600'}
@@ -555,14 +575,14 @@ export default function PlayerSetupSlot({
                 <h3 className="text-base sm:text-lg font-bold text-center flex-1">
                     Slot {slotIndex + 1} 
                     {isHostSlot && " (Host)"}
-                    {isSlotLocked && " (Locked)"}
+                    {isSlotLocked && type !== 'None' && " (Locked)"}
                     {isRoomFull && !isOwnSlot && " (Full)"}
                     {userHasMaxSlots && !isOwnSlot && " (Limit)"}
                 </h3>
             </div>
             
             {/* Enhanced Ownership Badge */}
-            {username && (type !== 'None' || isSlotLocked) && (
+            {username && type !== 'None' && (
                 <div className={`flex items-center justify-center mb-4 p-3 rounded-lg shadow-md ${
                     isOwnSlot && !isSlotLocked && isLobbyView ? 'bg-green-800 bg-opacity-70 border-2 border-green-600' : 
                     !isOwnSlot && isSlotLocked && isLobbyView ? 'bg-blue-800 bg-opacity-70 border-2 border-blue-600' : 
@@ -606,14 +626,10 @@ export default function PlayerSetupSlot({
             )}
             
             {/* NEW: Display User Slot Limit Message */}
-            {userHasMaxSlots && !isOwnSlot && (
-                <p className="text-xs text-orange-400 text-center mb-2 font-semibold">
-                    ⚠️ Slot Limit Reached (2/2 slots)
-                </p>
-            )}
+            {/* Removed slot limit warning - no longer enforced */}
             
             {/* NEW: Display Locked Message */}
-            {isSlotLocked && (
+            {isSlotLocked && type !== 'None' && (
                 <p className="text-xs text-red-400 text-center mb-2 font-semibold">
                     🔒 Locked by another player
                 </p>
@@ -659,18 +675,18 @@ export default function PlayerSetupSlot({
                             <div className="p-2 rounded bg-gray-800 border border-gray-600 text-white">
                                 <p className="text-sm font-medium text-gray-300 mb-1">Character</p>
                                 <p className="text-base font-semibold text-yellow-300">
-                                    {getDisplayCharacterName() || 'Unknown Character'}
+                                    {lockedSlotCharacter?.name || selectedCharacter?.name || (playerSlot.characterName && playerSlot.characterName !== 'Unknown Character' ? playerSlot.characterName : 'Unknown Character')}
                                 </p>
-                                {selectedCharacter && (
+                                {(lockedSlotCharacter || selectedCharacter) && (
                                     <>
                                         <p className="text-xs text-gray-400 mt-1">
-                                            {selectedCharacter.class} - Lvl {selectedCharacter.level || 1}
+                                            {(lockedSlotCharacter || selectedCharacter).class} - Lvl {(lockedSlotCharacter || selectedCharacter).level || 1}
                                         </p>
                                         <div className="grid grid-cols-2 gap-1 mt-2 text-xs">
-                                            <div className="text-gray-400">HP: <span className="text-green-400">{selectedCharacter.hp}/{selectedCharacter.maxHp}</span></div>
-                                            <div className="text-gray-400">AC: <span className="text-blue-400">{selectedCharacter.ac}</span></div>
-                                            <div className="text-gray-400">Init: <span className="text-purple-400">{selectedCharacter.initiative > 0 ? '+' : ''}{selectedCharacter.initiative}</span></div>
-                                            <div className="text-gray-400">PP: <span className="text-yellow-400">{selectedCharacter.passivePerception}</span></div>
+                                            <div className="text-gray-400">HP: <span className="text-green-400">{(lockedSlotCharacter || selectedCharacter).hp || 0}/{(lockedSlotCharacter || selectedCharacter).maxHp || 0}</span></div>
+                                            <div className="text-gray-400">AC: <span className="text-blue-400">{(lockedSlotCharacter || selectedCharacter).ac || 0}</span></div>
+                                            <div className="text-gray-400">Init: <span className="text-purple-400">{(lockedSlotCharacter || selectedCharacter).initiative > 0 ? '+' : ''}{(lockedSlotCharacter || selectedCharacter).initiative || 0}</span></div>
+                                            <div className="text-gray-400">PP: <span className="text-yellow-400">{(lockedSlotCharacter || selectedCharacter).passivePerception || 0}</span></div>
                                         </div>
                                     </>
                                 )}
@@ -709,8 +725,8 @@ export default function PlayerSetupSlot({
                 )}
             </div>
 
-            {/* Show character card only for own unlocked slots or in dashboard */}
-            {selectedCharacter && !isSlotLocked && (
+            {/* Show character card for all slots in lobby view, only unlocked slots in dashboard view */}
+            {selectedCharacter && (!isSlotLocked || isLobbyView) && (
                 <div className="mb-4">
                     {/* Enhanced character display with hover/expand system */}
                     {isLobbyView ? (
@@ -738,14 +754,14 @@ export default function PlayerSetupSlot({
                             <div className="flex flex-col items-center gap-4">
                                 {/* Portrait */}
                                 <div className="relative group flex-shrink-0">
-                                    {selectedCharacter?.avatarUrl && !imageError ? (
+                                    {((lockedSlotCharacter || selectedCharacter)?.avatarUrl) && !imageError ? (
                                                                                 <img
-                                                                                    src={selectedCharacter.avatarUrl}
-                                                                                    alt={`${selectedCharacter.name} portrait`}
+                                                                                    src={(lockedSlotCharacter || selectedCharacter)?.avatarUrl}
+                                                                                    alt={`${(lockedSlotCharacter || selectedCharacter)?.name} portrait`}
                                                                                     className={`w-32 h-32 object-cover rounded-lg border-2 border-gray-500 shadow-xl transition-transform duration-200 group-hover:scale-105 ${isImageLoading ? 'opacity-0' : 'opacity-100'}`}
                                                                                 />                                    ) : (
                                         <div className="fallback-avatar w-32 h-32 aspect-square border-2 border-gray-500 rounded-lg shadow-xl bg-gradient-to-br from-amber-600 via-orange-700 to-red-700 flex items-center justify-center text-white font-black text-4xl md:text-5xl ring-4 ring-amber-400/50 hover:ring-amber-400/80 transition-all duration-300">
-                                            {selectedCharacter?.name?.charAt(0).toUpperCase() || '?'}
+                                            {(lockedSlotCharacter || selectedCharacter)?.name?.charAt(0).toUpperCase() || '?'}
                                         </div>
                                     )}
                                     {/* Loading Skeleton */}
@@ -758,7 +774,7 @@ export default function PlayerSetupSlot({
                                 <div className="w-full space-y-2 text-center">
                                     {/* Name and Level */}
                                     <div className="flex flex-col items-center gap-2">
-                                        <p className="font-bold text-lg md:text-xl text-yellow-300 truncate" title={selectedCharacter?.name}>{selectedCharacter?.name || 'Unknown Character'}</p>
+                                        <p className="font-bold text-lg md:text-xl text-yellow-300 truncate" title={(lockedSlotCharacter || selectedCharacter)?.name}>{(lockedSlotCharacter || selectedCharacter)?.name || 'Unknown Character'}</p>
                                         <span className="bg-blue-600 text-white text-sm px-2 py-1 rounded hover:bg-blue-500 transition-colors">
                                             Lvl {selectedCharacter?.level || 1}
                                         </span>
@@ -767,11 +783,11 @@ export default function PlayerSetupSlot({
                                     {/* Race/Class & Primary Attribute */}
                                     <div className="flex flex-col items-center gap-2 text-sm text-gray-300">
                                         <p className="truncate">
-                                            {selectedCharacter?.race || 'Unknown'} {selectedCharacter?.class || 'Unknown'}
+                                            {(lockedSlotCharacter || selectedCharacter)?.race || 'Unknown'} {(lockedSlotCharacter || selectedCharacter)?.class || 'Unknown'}
                                         </p>
                                         {selectedCharacter?.primaryAttribute && (
                                             <span className="bg-purple-600 text-white text-[10px] px-2 py-1 rounded">
-                                                {selectedCharacter.primaryAttribute}
+                                                {(lockedSlotCharacter || selectedCharacter)?.primaryAttribute}
                                             </span>
                                         )}
                                     </div>
@@ -779,13 +795,13 @@ export default function PlayerSetupSlot({
                                     {/* Key Stats (HP, AC, Init) */}
                                     <div className={`grid ${layoutClasses.statsLayout} gap-2 text-center text-sm font-bold mt-2`}>
                                         <div className="bg-gray-800/50 rounded-md p-1 shadow-inner">
-                                            ❤️ HP: <span className="text-green-400">{selectedCharacter?.hp || 0}/{selectedCharacter?.maxHp || 0}</span>
+                                            ❤️ HP: <span className="text-green-400">{(lockedSlotCharacter || selectedCharacter)?.hp || 0}/{(lockedSlotCharacter || selectedCharacter)?.maxHp || 0}</span>
                                         </div>
                                         <div className="bg-gray-800/50 rounded-md p-1 shadow-inner">
-                                            🛡️ AC: <span className="text-blue-400">{selectedCharacter?.ac || 0}</span>
+                                            🛡️ AC: <span className="text-blue-400">{(lockedSlotCharacter || selectedCharacter)?.ac || 0}</span>
                                         </div>
                                         <div className="bg-gray-800/50 rounded-md p-1 shadow-inner">
-                                            🎯 Init: <span className="text-purple-400">{selectedCharacter?.initiative > 0 ? '+' : ''}{selectedCharacter?.initiative || 0}</span>
+                                            🎯 Init: <span className="text-purple-400">{(lockedSlotCharacter || selectedCharacter)?.initiative > 0 ? '+' : ''}{(lockedSlotCharacter || selectedCharacter)?.initiative || 0}</span>
                                         </div>
                                     </div>
 
@@ -817,7 +833,8 @@ export default function PlayerSetupSlot({
                                             { key: 'wisdom', label: 'WIS', icon: '🦉' },
                                             { key: 'charisma', label: 'CHA', icon: '💬' }
                                         ].map(({ key, label, icon }, index) => {
-                                            const statValue = selectedCharacter?.stats?.[key as keyof typeof selectedCharacter.stats] || 10;
+                                            const character = lockedSlotCharacter || selectedCharacter;
+                                            const statValue = character?.stats?.[key as keyof typeof character.stats] || 10;
                                             const modifier = Math.floor((statValue - 10) / 2);
                                             const modifierStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
                                             const modifierColor = modifier > 0 ? 'text-green-400 font-bold' : modifier < 0 ? 'text-red-400 font-bold' : 'text-gray-500';
@@ -837,26 +854,26 @@ export default function PlayerSetupSlot({
                                     </div>
 
                                     {/* Background */}
-                                    {selectedCharacter?.background && (
+                                    {(lockedSlotCharacter || selectedCharacter)?.background && (
                                         <div className="w-full mt-4 border-t border-gray-700/50 pt-4">
                                             <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-3">Background</div>
-                                            <p className="text-sm text-gray-300">{selectedCharacter.background}</p>
+                                            <p className="text-sm text-gray-300">{(lockedSlotCharacter || selectedCharacter)?.background}</p>
                                         </div>
                                     )}
 
                                     {/* Equipment Section - Grid Layout */}
-                                    {selectedCharacter?.equipment && selectedCharacter.equipment.length > 0 && (
+                                    {(lockedSlotCharacter || selectedCharacter)?.equipment && (lockedSlotCharacter || selectedCharacter)?.equipment.length > 0 && (
                                         <div className="w-full mt-2 border-t border-gray-700/50 pt-4">
                                             <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-3">Equipment</div>
                                             <div className={`grid ${layoutClasses.equipmentCols} gap-3`}>
-                                                {selectedCharacter.equipment.slice(0, isExpanded ? selectedCharacter.equipment.length : 2).map((item, index) => (
+                                                {(lockedSlotCharacter || selectedCharacter)?.equipment.slice(0, isExpanded ? (lockedSlotCharacter || selectedCharacter)?.equipment.length : 2).map((item, index) => (
                                                     <div key={index} className="bg-gradient-to-r from-gray-700 to-gray-600 text-gray-200 px-3 py-2 rounded-lg shadow-sm hover:shadow-md transition-all text-sm" style={{ animationDelay: `${index * 30}ms` }}>
                                                         {item}
                                                     </div>
                                                 ))}
-                                                {!isExpanded && selectedCharacter.equipment.length > 2 && (
+                                                {!isExpanded && (lockedSlotCharacter || selectedCharacter)?.equipment.length > 2 && (
                                                     <div className="bg-yellow-600/20 text-yellow-300 px-3 py-2 rounded-lg shadow-sm text-sm flex items-center justify-center">
-                                                        +{selectedCharacter.equipment.length - 2} more
+                                                        +{(lockedSlotCharacter || selectedCharacter)?.equipment.length - 2} more
                                                     </div>
                                                 )}
                                             </div>
@@ -865,7 +882,7 @@ export default function PlayerSetupSlot({
                                 </div>
                             </div>
                     ) : (
-                        <CharacterDisplayCard character={selectedCharacter} size={layoutClasses.cardSize} />
+                        <CharacterDisplayCard character={lockedSlotCharacter || selectedCharacter} size={layoutClasses.cardSize} />
                     )}
                     {/* Only show edit/delete buttons in dashboard (when not in lobby view) */}
                     {showManagementButtons && !isSlotLocked && !isLobbyView && (

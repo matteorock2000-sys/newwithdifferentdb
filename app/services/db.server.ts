@@ -258,8 +258,44 @@ export async function findNextAvailableSlot(userId: string): Promise<number | nu
 
 export async function getCharactersForUser(userId: string): Promise<(Character | null)[]> {
   const { data, error } = await db
-    .from('characters')
-    .select('*')
+      .from('characters')
+      .select(`
+        id,
+        userId,
+        slot_index,
+        name,
+        race,
+        class,
+        level,
+        background,
+        alignment,
+        stats,
+        stat_rolls,
+        modifiers,
+        primary_attribute,
+        secondary_attribute,
+        hp,
+        max_hp,
+        armor_class,
+        initiative,
+        passive_perception,
+        proficiency_bonus,
+        saving_throws,
+        skills,
+        equipment,
+        inventory,
+        armor,
+        fight_style,
+        total_ac,
+        weapons,
+        spellcasting_ability,
+        spell_save_dc,
+        spell_attack_bonus,
+        features,
+        personality,
+        created_at,
+        avatar_url
+      `)
     .eq('userId', userId); // CORRECTED: Query using userId
 
   if (error) {
@@ -271,8 +307,44 @@ export async function getCharactersForUser(userId: string): Promise<(Character |
 
 export async function getCharacterById(userId: string, characterId: string): Promise<Character | null> {
   const { data, error } = await db
-    .from('characters')
-    .select('*')
+      .from('characters')
+      .select(`
+        id,
+        userId,
+        slot_index,
+        name,
+        race,
+        class,
+        level,
+        background,
+        alignment,
+        stats,
+        stat_rolls,
+        modifiers,
+        primary_attribute,
+        secondary_attribute,
+        hp,
+        max_hp,
+        armor_class,
+        initiative,
+        passive_perception,
+        proficiency_bonus,
+        saving_throws,
+        skills,
+        equipment,
+        inventory,
+        armor,
+        fight_style,
+        total_ac,
+        weapons,
+        spellcasting_ability,
+        spell_save_dc,
+        spell_attack_bonus,
+        features,
+        personality,
+        created_at,
+        avatar_url
+      `)
     .eq('id', characterId)
     .eq('userId', userId) // Ensure ownership
     .single();
@@ -308,18 +380,71 @@ export async function getCharacterAvatarUrl(userId: string, characterId: string)
 }
 
 export async function getCharactersByIds(characterIds: string[]): Promise<Character[]> {
-  if (characterIds.length === 0) return [];
+  console.log('[DB SERVICE] getCharactersByIds called with:', characterIds);
   
-  const { data, error } = await db
-    .from('characters')
-    .select('*')
-    .in('id', characterIds);
-
-  if (error) {
-    logger.error("Error fetching characters by IDs", { error: error instanceof Error ? error.message : "Unknown error" });
+  if (!characterIds || characterIds.length === 0) {
+    console.log('[DB SERVICE] Empty characterIds array, returning empty array');
     return [];
   }
-  return data.map(mapDbCharacterToCharacter);
+
+  try {
+    console.log('[DB SERVICE] Querying characters with IDs:', characterIds);
+    const { data, error } = await db
+      .from('characters')
+      .select(`
+        id,
+        userId,
+        slot_index,
+        name,
+        race,
+        class,
+        level,
+        background,
+        alignment,
+        stats,
+        stat_rolls,
+        modifiers,
+        primary_attribute,
+        secondary_attribute,
+        hp,
+        max_hp,
+        armor_class,
+        initiative,
+        passive_perception,
+        proficiency_bonus,
+        saving_throws,
+        skills,
+        equipment,
+        inventory,
+        armor,
+        fight_style,
+        total_ac,
+        weapons,
+        spellcasting_ability,
+        spell_save_dc,
+        spell_attack_bonus,
+        features,
+        personality,
+        created_at,
+        avatar_url
+      `)
+      .in('id', characterIds);
+
+    console.log('[DB SERVICE] Query result:', { data: data?.length || 0, error });
+
+    if (error) {
+      console.error('[DB SERVICE] Database error:', error);
+      logger.error("Error fetching characters by IDs", { characterIds, error: error.message });
+      throw new Error(`Failed to fetch characters by IDs: ${error.message}`);
+    }
+
+    console.log('[DB SERVICE] Successfully fetched', data?.length || 0, 'characters');
+    return data.map(mapDbCharacterToCharacter);
+  } catch (err) {
+    console.error('[DB SERVICE] Exception in getCharactersByIds:', err);
+    logger.error("Exception while fetching characters by IDs", { characterIds, err });
+    throw err instanceof Error ? err : new Error("Unknown error fetching characters by IDs");
+  }
 }
 
 export async function saveCharacter(userId: string, character: Character): Promise<Character> {
@@ -388,7 +513,7 @@ export async function saveDefaultCharactersForUser(userId: string, characters: O
  */
 export async function saveTemporaryPartySetup(userId: string, partySlots: PlayerSlot[]): Promise<void> {
   const dataToUpsert = [{ user_id: userId, party_slots: partySlots }];
-  logger.debug("[DB SERVICE] Attempting to save temporary party setup for user:", { userId, data: JSON.stringify(dataToUpsert) });
+  logger.debug("[DB SERVICE] Saving temporary party setup", { userId, slotCount: partySlots.length, action: 'save' });
   
   const { error } = await db
     .from('temporary_party_setups')
@@ -396,10 +521,10 @@ export async function saveTemporaryPartySetup(userId: string, partySlots: Player
     .upsert(dataToUpsert, { onConflict: 'user_id' });
 
   if (error) {
-    logger.error("[DB SERVICE] Error saving temporary party setup", { error: error instanceof Error ? error.message : "Unknown error" });
+    logger.error("[DB SERVICE] Error saving temporary party setup", { userId, error: error instanceof Error ? error.message : "Unknown error" });
     throw new Error("Failed to save temporary party setup.");
   }
-  logger.debug("[DB SERVICE] Temporary party setup saved successfully.");
+  logger.debug("[DB SERVICE] Temporary party setup saved successfully", { userId });
 }
 
 /**
@@ -412,10 +537,10 @@ export async function clearTemporaryPartySetup(userId: string): Promise<void> {
     .eq('user_id', userId);
 
   if (deleteError) {
-    logger.warn("[DB SERVICE] Warning: Failed to clear temporary party setup for user:", { userId, error: deleteError instanceof Error ? deleteError.message : "Unknown error" });
+    logger.warn("[DB SERVICE] Failed to clear temporary party setup", { userId, error: deleteError instanceof Error ? deleteError.message : "Unknown error", action: 'clear' });
     throw new Error("Failed to clear temporary party setup.");
   } else {
-    logger.debug("[DB SERVICE] Temporary party setup cleared successfully.");
+    logger.debug("[DB SERVICE] Temporary party setup cleared successfully", { userId });
   }
 }
 
@@ -439,7 +564,7 @@ export async function getTemporaryPartySetup(userId: string): Promise<PlayerSlot
   }
 
   if (!data) {
-    logger.debug("[DB SERVICE] No temporary party setup found for user:", { userId });
+    logger.debug("[DB SERVICE] No temporary party setup found", { userId, status: 'not_found' });
     return null;
   }
   
@@ -455,13 +580,13 @@ export async function getTemporaryPartySetup(userId: string): Promise<PlayerSlot
  * This is useful for "consume once" temporary data patterns.
  */
 export async function getAndClearTemporaryPartySetup(userId: string): Promise<PlayerSlot[] | null> {
-  logger.debug("[DB SERVICE] Attempting to get and clear temporary party setup for user:", { userId });
+  logger.debug("[DB SERVICE] Retrieving temporary party setup", { userId, action: 'get_and_clear' });
   const partySlots = await getTemporaryPartySetup(userId);
   if (partySlots) {
     await clearTemporaryPartySetup(userId);
-    logger.debug("[DB SERVICE] Successfully got and cleared temporary party setup.");
+    logger.debug("[DB SERVICE] Successfully retrieved and cleared temporary party setup", { userId, slotCount: partySlots.length });
   } else {
-    logger.debug("[DB SERVICE] No temporary party setup found to get and clear.");
+    logger.debug("[DB SERVICE] No temporary party setup found", { userId, status: 'not_found' });
   }
   return partySlots;
 }

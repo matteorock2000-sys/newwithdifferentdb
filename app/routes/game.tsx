@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useNavigation, useFetcher, useSubmit } from "@remix-run/react";
+import { useLoaderData, useNavigation, useFetcher, useSubmit, useNavigate } from "@remix-run/react";
 import { getSession, commitSession } from "~/sessions";
 import type { Character, PlayerSlot, ScenarioForDisplay, User } from "~/types";
 import { generateScenariosForCharacter } from "~/services/openrouter.server";
@@ -83,12 +83,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // CRITICAL FIX: Handle null cookie header
     const cookieHeader = request.headers.get("Cookie");
     const session = await getSession(cookieHeader || "");
-    const username = session.get("username") || "Unknown";
     const userId = session.get("userId");
     const url = new URL(request.url);
     const roomCode = url.searchParams.get("roomCode");
 
-    let data: LoaderData = {
+    if (!userId) {
+        return redirect("/login");
+    }
+
+    // Fetch user from database to get their username
+    const currentUser = await getUserById(userId);
+    const username = currentUser?.username || "Unknown";
+
+    const data: LoaderData = {
         party: [],
         resolvedParty: [],
         allRoomCharacters: [],
@@ -102,10 +109,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
         isHost: false,
         roomStatus: null,
     };
-
-    if (!userId) {
-        return redirect("/login");
-    }
 
     // FIX: Fetch actual characters for the user instead of mocks
     // This ALWAYS contains the current user's characters, regardless of room state
@@ -132,7 +135,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
                             ...roomSlot,
                             ...tempSlot,
                             userId: userId,
-                            username: session.get("username") || "Unknown"
+                            username: username
                         };
                     }
                     return roomSlot;
@@ -143,7 +146,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
                     const additionalSlots = tempPartySetup.slice(mergedSlots.length).map(slot => ({
                         ...slot,
                         userId: userId,
-                        username: session.get("username") || "Unknown"
+                        username: username
                     }));
                     mergedSlots.push(...additionalSlots);
                 }
@@ -185,6 +188,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
                 // Room is in scenario selected status - redirect to world-map
                 console.log(`[REDIRECT] Room ${roomCode} is in ${room.status} status, redirecting to world-map`);
                 return redirect(`/world-map?roomCode=${roomCode}`);
+            } else if (room.status === 'map_generation') {
+                // Room is in map generation mode - redirect to map/world-map generation
+                console.log(`[REDIRECT] Room ${roomCode} is in ${room.status} status, redirecting to world-map`);
+                return redirect(`/world-map?roomCode=${roomCode}`);
             } else if (room.status === 'scenario_selection') {
                 // Room is in scenario selection mode - stay in game route for voting
                 console.log(`[GAME ROUTE] Room ${roomCode} is in scenario_selection status, showing voting interface`);
@@ -212,8 +219,35 @@ export async function loader({ request }: LoaderFunctionArgs) {
             // Fetch all characters mentioned in the room slots (for display in other players' slots)
             const roomCharacters = await getCharactersByIds(characterIds);
             
-            // For display: combine current user's characters with other room characters
-            data.allRoomCharacters = [...userResolvedCharacters, ...roomCharacters.filter(c => !userResolvedCharacters.some(rc => rc.id === c.id))];
+            // Get all characters from the room (including all users' characters)
+            // First, get all character IDs from all participants
+            console.log(`[GAME LOADER] Room participants:`, room.participants);
+            const allCharacterIds = room.participants.map(p => p.characterId).filter((id): id is string => !!id);
+            console.log(`[GAME LOADER] Character IDs from participants:`, allCharacterIds);
+            
+            // Then fetch all characters by their IDs
+            data.allRoomCharacters = await getCharactersByIds(allCharacterIds);
+            console.log(`[GAME LOADER] Fetched ${data.allRoomCharacters.length} characters from room`);
+            
+            // Also include characters from room.setup_slots that might not be in participants
+            const slotCharacterIds = room.setup_slots.map(s => s.characterId).filter((id): id is string => !!id);
+            const missingSlotCharacterIds = slotCharacterIds.filter(id => !allCharacterIds.includes(id));
+            if (missingSlotCharacterIds.length > 0) {
+                console.log(`[GAME LOADER] Found ${missingSlotCharacterIds.length} characters in slots not in participants:`, missingSlotCharacterIds);
+                const additionalCharacters = await getCharactersByIds(missingSlotCharacterIds);
+                const existingIds = new Set(data.allRoomCharacters.map(c => c.id));
+                const newCharacters = additionalCharacters.filter(c => !existingIds.has(c.id));
+                data.allRoomCharacters = [...data.allRoomCharacters, ...newCharacters];
+                console.log(`[GAME LOADER] Added ${newCharacters.length} additional characters from slots`);
+            }
+            
+            // Also include room.characters if they exist (for backward compatibility)
+            if (room.characters && room.characters.length > 0) {
+                // Filter out any characters that are already in allRoomCharacters
+                const existingIds = new Set(data.allRoomCharacters.map(c => c.id));
+                const additionalCharacters = room.characters.filter(c => !existingIds.has(c.id));
+                data.allRoomCharacters = [...data.allRoomCharacters, ...additionalCharacters];
+            }
 
             const userMap = new Map(users.filter((u): u is User => !!u).map(u => [u.id, u.username]));
             const participantMap = new Map(room.participants.map(p => [p.characterId, p.userId]));
@@ -221,20 +255,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
             // Use the saved slots from the room, preserving character selection and readiness, and enriching with user data
             data.party = room.setup_slots.map(slot => {
-                if (slot.characterId) {
-                    const slotUserId = participantMap.get(slot.characterId);
-                    const character = characterMap.get(slot.characterId);
-                    if (slotUserId && character) {
-                        const username = userMap.get(slotUserId);
-                        return { 
-                            ...slot, 
-                            userId: slotUserId, 
-                            username,
-                            characterName: character.name
-                        };
+                const enrichedSlot = { ...slot };
+                if (enrichedSlot.characterId) {
+                    const character = characterMap.get(enrichedSlot.characterId);
+                    if (character) {
+                        // ALWAYS update the character name from the definitive character source
+                        enrichedSlot.characterName = character.name;
+                    }
+                    
+                    // Also try to find the user
+                    const slotUserId = participantMap.get(enrichedSlot.characterId);
+                    if (slotUserId) {
+                        enrichedSlot.userId = slotUserId;
+                        enrichedSlot.username = userMap.get(slotUserId);
                     }
                 }
-                return slot;
+                return enrichedSlot;
             });
             // --- END: Username Enrichment Logic & Character Fetching ---
 
@@ -287,7 +323,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         const defaultCharId = userResolvedCharacters.length > 0 ? userResolvedCharacters[0].id : null;
 
         data.party = [
-            { type: defaultCharId ? 'Human' : 'None', characterId: defaultCharId, isReady: !!defaultCharId, userId: userId, username: undefined }, // Host slot gets user info locally
+            { type: defaultCharId ? 'Human' : 'None', characterId: defaultCharId, isReady: !!defaultCharId, userId: userId, username: username }, // Host slot gets user info locally
             { type: 'None', characterId: null, isReady: false },
             { type: 'None', characterId: null, isReady: false },
             { type: 'None', characterId: null, isReady: false },
@@ -741,12 +777,23 @@ export async function action({ request }: ActionFunctionArgs) {
         const scenarioId = formData.get('scenarioId')?.toString();
         const slotIndexStr = formData.get('slotIndex')?.toString();
         const roomCode = formData.get('roomCode')?.toString();
+        const userIdFromForm = formData.get('userId')?.toString(); // from form
+        const characterId = formData.get('characterId')?.toString();
+
+        // Use userId from session as the authoritative source
+        // but log both if they differ
+        if (userIdFromForm !== userId) {
+            console.warn(`[VOTE] User ID mismatch! Session: ${userId}, Form: ${userIdFromForm}. Using session ID.`);
+        }
 
         console.log(`[GAME ROUTE] castVote called with:`, {
-            scenarioId, slotIndexStr, roomCode, userId
+            scenarioId, slotIndexStr, roomCode, userId, characterId
         });
+        
+        // Log the entire form data for debugging
+        console.log(`[GAME ROUTE] Full form data:`, Object.fromEntries(formData.entries()));
 
-        if (!scenarioId || !slotIndexStr || !roomCode) {
+        if (!scenarioId || !slotIndexStr || !roomCode || !userId) {
             console.log(`[GAME ROUTE] Missing required data for voting`);
             return createApiErrorResponse(new Error("Missing required data for voting."), "Missing voting data");
         }
@@ -754,7 +801,15 @@ export async function action({ request }: ActionFunctionArgs) {
         try {
             const slotIndex = parseInt(slotIndexStr);
 
-            const result = await castVote(roomCode, scenarioId, userId, slotIndex);
+            console.log(`[GAME ROUTE] Calling castVote service with:`, {
+                roomCode,
+                scenarioId,
+                userId,
+                slotIndex,
+                characterId
+            });
+
+            const result = await castVote(roomCode, scenarioId, userId, slotIndex, characterId);
             
             console.log(`[GAME ROUTE] castVote result:`, result);
             
@@ -765,11 +820,22 @@ export async function action({ request }: ActionFunctionArgs) {
                     userVoteCount: result.userVoteCount
                 });
             } else {
+                console.log(`[GAME ROUTE] Vote casting failed:`, result.message);
                 return createApiErrorResponse(new Error(result.message), "Vote casting failed");
             }
         } catch (error) {
-            console.error("Error casting vote:", error);
-            return createApiErrorResponse(error, "Failed to cast vote");
+            console.error("[GAME ROUTE] Error casting vote:", error);
+            console.error("Error details:", {
+                name: error instanceof Error ? error.name : 'Unknown',
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : 'No stack trace'
+            });
+            
+            // Return detailed error for debugging
+            return json({ 
+                error: error instanceof Error ? error.message : "Failed to cast vote",
+                success: false
+            }, { status: 500 });
         }
     }
 
@@ -1115,6 +1181,62 @@ export async function action({ request }: ActionFunctionArgs) {
         }
     }
 
+    if (intent === 'recordDiceRoll') {
+        const roomCode = formData.get('roomCode')?.toString();
+        const userId = formData.get('userId')?.toString();
+        const slotIndexStr = formData.get('slotIndex')?.toString();
+        const diceResultStr = formData.get('diceResult')?.toString();
+
+        if (!roomCode || !userId || !slotIndexStr || !diceResultStr) {
+            return json({ error: "Missing required data for dice roll." }, { status: 400 });
+        }
+
+        try {
+            const slotIndex = parseInt(slotIndexStr);
+            const diceResult = parseInt(diceResultStr);
+
+            // Import the function from roomDice.server
+            const { recordDiceRoll } = await import("~/services/roomDice.server");
+            
+            const success = await recordDiceRoll(roomCode, userId, 'Human', slotIndex, diceResult, 'd20', 'tiebreaker');
+            
+            if (success) {
+                console.log(`[DICE ROLL] Recorded dice roll for room ${roomCode}, user ${userId}, slot ${slotIndex}, result ${diceResult}`);
+                return json({ success: true, message: "Dice roll recorded successfully" });
+            } else {
+                return json({ error: "Failed to record dice roll" }, { status: 500 });
+            }
+        } catch (error) {
+            console.error("Error recording dice roll:", error);
+            return json({ error: "Failed to record dice roll" }, { status: 500 });
+        }
+    }
+
+    if (intent === 'getDiceRollingState') {
+        const roomCode = formData.get('roomCode')?.toString();
+
+        if (!roomCode) {
+            return json({ error: "Missing room code." }, { status: 400 });
+        }
+
+        try {
+            // Import the function from roomDice.server
+            const { getDiceRollingState } = await import("~/services/roomDice.server");
+            
+            const diceState = await getDiceRollingState(roomCode);
+            
+            if (diceState) {
+                console.log(`[DICE STATE] Retrieved dice rolling state for room ${roomCode}`);
+                return json({ success: true, diceState });
+            } else {
+                return json({ error: "No active dice rolling state found" }, { status: 404 });
+            }
+        } catch (error) {
+            console.error("Error getting dice rolling state:", error);
+            return json({ error: "Failed to get dice rolling state" }, { status: 500 });
+        }
+    }
+
     if (intent === 'sendMessage') {
         const roomCode = formData.get('roomCode')?.toString();
         const message = formData.get('message')?.toString();
@@ -1148,12 +1270,16 @@ export async function action({ request }: ActionFunctionArgs) {
 
     return json({ error: "Invalid intent" }, { status: 400 });
 }
+
 export default function GameRoute() {
     const { party: initialParty, resolvedParty: initialResolvedParty, allRoomCharacters: initialAllRoomCharacters, currentUserId, currentUsername, activeCharacter, scenarios, messages, isInGame, roomCode: initialRoomCode, isHost, roomStatus: initialRoomStatus } = useLoaderData<LoaderData>();
     const navigation = useNavigation();
     const [fetcherKey, setFetcherKey] = useState(0);
+    const navigate = useNavigate();
     const fetcher = useFetcher<{ data: { characterData: Character } | { error: string }, type: 'success' | 'error' }>({ key: `character-generation-${fetcherKey}` });
     const readinessFetcher = useFetcher<{ success: boolean, error?: string }>(); // New fetcher for readiness updates (deprecated - kept for compatibility)
+    const leaveRoomFetcher = useFetcher<{ success: boolean, redirectUrl?: string }>(); // New fetcher for leaveRoom action
+    const diceFetcher = useFetcher<{ success: boolean, error?: string }>(); // New fetcher for dice roll recording
     const submit = useSubmit(); // Hook for submitting forms outside of standard navigation
 
     const [showCreationModal, setShowCreationModal] = useState(false);
@@ -1165,8 +1291,7 @@ export default function GameRoute() {
     const [currentParty, setCurrentParty] = useState<PlayerSlot[]>(initialParty);
     const { 
         updateSlot, 
-        getSlotSyncState, 
-        isSlotUpdating 
+        getSlotSyncState
     } = useOptimisticSlotUpdate({
         roomCode: initialRoomCode,
         currentParty: currentParty,
@@ -1231,7 +1356,14 @@ export default function GameRoute() {
                 userId: s.userId?.substring(0, 8) 
             })));
             
-            setCurrentParty(newSlots);
+            // Stabilize the party slots by ensuring consistent structure
+            const stabilizedSlots = newSlots.map(slot => ({
+                ...slot,
+                userId: slot.userId || null,
+                username: slot.username || null,
+                characterId: slot.characterId || null
+            }));
+            setCurrentParty(stabilizedSlots);
         });
         
         // Cleanup function
@@ -1240,6 +1372,16 @@ export default function GameRoute() {
             unsubscribe();
         };
     }, [currentRoomCode, currentUserId]);
+
+    // --- Effect to handle leaveRoom redirect response ---
+    useEffect(() => {
+        if (leaveRoomFetcher.data && leaveRoomFetcher.state === 'idle') {
+            if (leaveRoomFetcher.data.success && leaveRoomFetcher.data.redirectUrl) {
+                navigate(leaveRoomFetcher.data.redirectUrl);
+            }
+        }
+    }, [leaveRoomFetcher.data, leaveRoomFetcher.state, navigate]);
+    // --------------------------------------------------------------------------
 
     // --- Effect to synchronize local state with loader data on mount/redirect ---
     // This is crucial for ensuring local state reflects persistent changes after CRUD actions redirect back.
@@ -1255,13 +1397,35 @@ export default function GameRoute() {
     useEffect(() => {
         currentPartyRef.current = currentParty;
     }, [currentParty]);
+    
+    // --- Effect to ensure stable keys for React rendering ---
+    useEffect(() => {
+        // Validate that party slots have stable keys for React rendering
+        currentParty.forEach((slot, index) => {
+            if (!slot || typeof slot !== 'object') {
+                console.warn('[RENDER VALIDATION] Invalid slot structure:', slot, index);
+            }
+        });
+    }, [currentParty]);
+    
+    // --- Effect to ensure party slots have proper keys for React rendering ---
+    useEffect(() => {
+        // Ensure each slot has a stable key for React rendering
+        // This effect just validates that we have consistent keys, doesn't change state
+        currentParty.forEach((slot, index) => {
+            // Validate slot structure for React rendering
+            if (!slot || typeof slot !== 'object') {
+                console.warn('[RENDER VALIDATION] Invalid slot structure:', slot, index);
+            }
+        });
+    }, [currentParty]);
     // --------------------------------------------------------------------------
 
     // --- Effect to synchronize slots when room code changes ---
     useEffect(() => {
         if (currentRoomCode && currentParty.length > 0) {
             // With realtime subscription in place, this effect is no longer needed
-            // Keeping it as a low-frequency fallback (every 30 seconds) in case realtime fails
+            // Keeping it as a low-frequency fallback (every 300 seconds) in case realtime fails
             const interval = setInterval(async () => {
                 try {
                     console.log(`[FALLBACK SYNCHRONIZATION] Performing fallback sync for room ${currentRoomCode}`);
@@ -1301,7 +1465,14 @@ export default function GameRoute() {
                                 console.log(`[FALLBACK SYNCHRONIZATION] Detected slot mismatches, updating to synchronized state`);
                                 console.log(`[FALLBACK SYNCHRONIZATION] Current slots:`, localParty.map(s => ({ type: s.type, characterId: s.characterId?.substring(0, 8), userId: s.userId?.substring(0, 8) })));
                                 console.log(`[FALLBACK SYNCHRONIZATION] Synchronized slots:`, newSlots.map((s: PlayerSlot) => ({ type: s.type, characterId: s.characterId?.substring(0, 8), userId: s.userId?.substring(0, 8) })));
-                                setCurrentParty(newSlots);
+                                // Stabilize the party slots by ensuring consistent structure
+                                const stabilizedSlots = newSlots.map(slot => ({
+                                    ...slot,
+                                    userId: slot.userId || null,
+                                    username: slot.username || null,
+                                    characterId: slot.characterId || null
+                                }));
+                                setCurrentParty(stabilizedSlots);
                             }
                         }
                     }
@@ -1319,7 +1490,7 @@ export default function GameRoute() {
                     
                     // Don't throw error, just log and continue - local state should be preserved
                 }
-            }, 30000); // Fallback sync every 30 seconds
+            }, 300000); // Fallback sync every 5 minutes (300 seconds)
             
             return () => clearInterval(interval);
         }
@@ -1338,7 +1509,76 @@ export default function GameRoute() {
             setShowScenarioSelector(false);
         }
     }, [initialRoomStatus]);
-    // ----------------------------------------------------------
+
+    // --- Effect to handle scenario updates from generateScenarios action ---
+    useEffect(() => {
+        if (fetcher.state === 'idle' && fetcher.data) {
+            if (fetcher.data.scenarios) {
+                console.log(`[SCENARIO UPDATE] Received ${fetcher.data.scenarios.length} scenarios from generateScenarios action`);
+                // This will trigger a re-render with the new scenarios
+                // The loader data should be updated via the action's response
+            }
+        }
+    }, [fetcher.state, fetcher.data]);
+
+    // --- Effect to prevent React DOM placement errors ---
+    useEffect(() => {
+        // Ensure party slots are properly initialized before rendering
+        if (currentParty.length === 0 && initialParty.length > 0) {
+            console.log('[RENDER PROTECTION] Initializing party slots to prevent DOM errors');
+            setCurrentParty(initialParty);
+        }
+    }, [currentParty.length, initialParty]);
+    
+    // --- Effect to ensure consistent slot structure ---
+    useEffect(() => {
+        // Validate and stabilize slot structure to prevent React hydration issues
+        const stabilizedParty = currentParty.map((slot, index) => {
+            if (!slot || typeof slot !== 'object') {
+                console.warn('[RENDER STABILIZATION] Invalid slot detected, creating default slot:', slot, index);
+                return {
+                    type: 'None',
+                    characterId: null,
+                    isReady: false,
+                    userId: null,
+                    username: null
+                };
+            }
+            return {
+                ...slot,
+                userId: slot.userId || null,
+                username: slot.username || null,
+                characterId: slot.characterId || null
+            };
+        });
+        
+        // Only update if there's a structural change, not just a reference change
+        const hasStructuralChange = stabilizedParty.some((newSlot, index) => {
+            const oldSlot = currentParty[index];
+            return (
+                newSlot.type !== oldSlot.type ||
+                newSlot.characterId !== oldSlot.characterId ||
+                newSlot.userId !== oldSlot.userId ||
+                newSlot.username !== oldSlot.username ||
+                newSlot.isReady !== oldSlot.isReady
+            );
+        });
+        
+        if (hasStructuralChange) {
+            console.log('[RENDER STABILIZATION] Stabilizing party slots structure');
+            setCurrentParty(stabilizedParty);
+        }
+    }, [currentParty]);
+    
+    // --- Effect to ensure React keys are stable for PlayerSetupSlot components ---
+    useEffect(() => {
+        // Ensure each slot has a stable key for React rendering
+        currentParty.forEach((slot, index) => {
+            if (!slot) {
+                console.warn('[RENDER VALIDATION] Missing slot at index:', index);
+            }
+        });
+    }, [currentParty]);
 
     // --- Handlers for Local State Updates ---
     const handleSlotChange = (slotIndex: number, newPlayerSlot: PlayerSlot) => {
@@ -1410,24 +1650,25 @@ export default function GameRoute() {
         }
     }, [fetcher.state, fetcher.data]);
 
-    const handleGenerateRandomCharacter = (e: React.FormEvent) => {
-        e.preventDefault();
-        console.log('[GAME ROUTE] Generating random character...');
-        const defaultClass = DND_5E_CHARACTERS[0]?.class || 'Fighter';
-        const defaultRace = DND_5E_CHARACTERS[0]?.race || 'Human';
-        const defaultBackground = 'Adventurer';
+    // Character generation handler (currently not used in this implementation)
+    // const handleGenerateRandomCharacter = (e: React.FormEvent) => {
+    //     e.preventDefault();
+    //     console.log('[GAME ROUTE] Generating random character...');
+    //     const defaultClass = DND_5E_CHARACTERS[0]?.class || 'Fighter';
+    //     const defaultRace = DND_5E_CHARACTERS[0]?.race || 'Human';
+    //     const defaultBackground = 'Adventurer';
 
-        fetcher.submit(
-            {
-                intent: 'generateRandomCharacter',
-                class: defaultClass,
-                race: defaultRace,
-                background: defaultBackground,
-                generateFull: 'true'
-            },
-            { method: 'post', action: '/game' }
-        );
-    };
+    //     fetcher.submit(
+    //         {
+    //             intent: 'generateRandomCharacter',
+    //             class: defaultClass,
+    //             race: defaultRace,
+    //             background: defaultBackground,
+    //             generateFull: 'true'
+    //         },
+    //         { method: 'post', action: '/game' }
+    //     );
+    // };
 
     const handleStartManualCreation = () => {
         console.log("[GAME ROUTE] 'Start Manual Creation' clicked.");
@@ -1502,6 +1743,32 @@ export default function GameRoute() {
         }
     };
 
+    // Dice roll recording handler
+    const handleDiceRoll = async (slotIndex: number, result: number, userIdForSlot: string) => {
+        if (!currentRoomCode) {
+            console.warn('[DICE ROLL] No room code available for dice roll recording');
+            return false;
+        }
+
+        console.log(`[DICE ROLL] Recording roll for slot ${slotIndex}, result ${result}, userId ${userIdForSlot}`);
+
+        // Submit dice roll data
+        diceFetcher.submit(
+            {
+                intent: 'recordDiceRoll',
+                roomCode: currentRoomCode,
+                userId: userIdForSlot,
+                slotIndex: slotIndex.toString(),
+                diceResult: result.toString(),
+                diceType: 'd20',
+                rollReason: 'tiebreaker'
+            },
+            { method: 'post', action: '/game' }
+        );
+
+        return true;
+    };
+
     const handleProceed = () => {
         if (!allActiveSlotsReady) {
             console.warn("Cannot proceed: Not all active slots are ready.");
@@ -1537,7 +1804,7 @@ export default function GameRoute() {
                             isLoading={isLoading}
                             activeCharacter={activeCharacter}
                             showCountdown={true}
-                            partyCharacters={currentResolvedParty}
+                            partyCharacters={currentAllRoomCharacters}
                             partySlots={currentParty}
                             currentUserId={currentUserId}
                             roomCode={initialRoomCode}
@@ -1578,12 +1845,17 @@ export default function GameRoute() {
                                 </button>
                             </fetcher.Form>
                         ) : (
-                            <a
-                                href="/rooms"
-                                className="py-2 px-4 bg-blue-700 hover:bg-blue-600 text-white font-bold rounded transition duration-300"
-                            >
-                                Exit to Room Selection
-                            </a>
+                            <leaveRoomFetcher.Form method="post" action="/game">
+                                <input type="hidden" name="intent" value="leaveRoom" />
+                                <input type="hidden" name="roomCode" value={initialRoomCode} />
+                                <button
+                                    type="submit"
+                                    disabled={leaveRoomFetcher.state !== 'idle'}
+                                    className="py-2 px-4 bg-blue-700 hover:bg-blue-600 text-white font-bold rounded transition duration-300"
+                                >
+                                    {leaveRoomFetcher.state === 'submitting' ? 'Exiting...' : 'Exit to Room Selection'}
+                                </button>
+                            </leaveRoomFetcher.Form>
                         )}
                     </div>
 
@@ -1605,6 +1877,7 @@ export default function GameRoute() {
                                     onToggleReady={handleToggleReady} // Pass readiness handler
                                     showManagementButtons={true} // <-- ENABLED FOR PARTY SETUP
                                     currentUserId={currentUserId}
+                                    onPlayerRollComplete={handleDiceRoll} // Pass dice roll handler
                                     currentUsername={currentUsername} // Corrected: Use destructured currentUsername
                                     isLobbyView={isLobbyView}
                                     syncStatus={getSlotSyncState(index)}
@@ -1677,6 +1950,7 @@ export default function GameRoute() {
                                     onToggleReady={handleToggleReady} // Pass readiness handler
                                     showManagementButtons={true} // <-- ENABLED FOR PARTY SETUP
                                     currentUserId={currentUserId}
+                                    onPlayerRollComplete={handleDiceRoll} // Pass dice roll handler
                                     currentUsername={currentUsername} // NEW PROP
                                     isLobbyView={isLobbyView}
                                     syncStatus={getSlotSyncState(index)}
@@ -1690,7 +1964,7 @@ export default function GameRoute() {
                         scenarios={scenarios}
                         isLoading={isLoading}
                         activeCharacter={activeCharacter}
-                        partyCharacters={currentResolvedParty}
+                        partyCharacters={currentAllRoomCharacters}
                         partySlots={currentParty}
                         currentUserId={currentUserId}
                         currentUsername={currentUsername} // NEW PROP
