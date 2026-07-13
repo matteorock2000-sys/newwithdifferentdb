@@ -3,3 +3,6 @@
 deploy_key
 deploy_key.pub
 ~/
+# Local Netlify folder
+.netlify
+>>>>>>> 027decf760dd2c1b84576ab0168837d0fe5bc734
